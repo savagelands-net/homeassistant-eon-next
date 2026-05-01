@@ -203,7 +203,7 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
         data={
             "username": "user@example.com",
             "password": "secret",
-            "account_number": "A-116BA522",
+            "account_number": "A-TEST0001",
         },
     )
     created: dict[str, object] = {}
@@ -234,7 +234,7 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
         "session": hass.client_session,
         "email": "user@example.com",
         "password": "secret",
-        "account_number": "A-116BA522",
+        "account_number": "A-TEST0001",
     }
     stored = hass.data[DOMAIN]["entry-123"]
     assert isinstance(stored["coordinator"], _Coordinator)
@@ -269,7 +269,7 @@ async def test_async_step_user_creates_entry_after_validating_account(
             captured["password"] = password
 
         async def async_discover_account_number(self) -> str:
-            return "A-116BA522"
+            return "A-TEST0001"
 
         async def async_get_tariff_snapshot(self) -> TariffSnapshot:
             return snapshot
@@ -282,10 +282,10 @@ async def test_async_step_user_creates_entry_after_validating_account(
     )
 
     assert result == {
-        "title": "E.ON Next A-116BA522",
+        "title": "E.ON Next A-TEST0001",
         "username": "user@example.com",
         "password": "secret",
-        "account_number": "A-116BA522",
+        "account_number": "A-TEST0001",
     }
     assert captured == {
         "session": "session",
@@ -300,10 +300,10 @@ async def test_config_flow_user_step_sets_unique_id_and_creates_entry(
 ) -> None:
     async def _validate_input(hass, data):
         return {
-            "title": "E.ON Next A-116BA522",
+            "title": "E.ON Next A-TEST0001",
             "username": data["username"],
             "password": data["password"],
-            "account_number": "A-116BA522",
+            "account_number": "A-TEST0001",
         }
 
     monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
@@ -317,14 +317,14 @@ async def test_config_flow_user_step_sets_unique_id_and_creates_entry(
 
     assert result == {
         "type": "create_entry",
-        "title": "E.ON Next A-116BA522",
+        "title": "E.ON Next A-TEST0001",
         "data": {
             "username": "user@example.com",
             "password": "secret",
-            "account_number": "A-116BA522",
+            "account_number": "A-TEST0001",
         },
     }
-    assert flow._unique_id == "A-116BA522"
+    assert flow._unique_id == "A-TEST0001"
 
 
 @pytest.mark.asyncio
@@ -393,17 +393,17 @@ async def test_config_flow_user_step_aborts_when_account_is_already_configured(
 ) -> None:
     async def _validate_input(hass, data):
         return {
-            "title": "E.ON Next A-116BA522",
+            "title": "E.ON Next A-TEST0001",
             "username": data["username"],
             "password": data["password"],
-            "account_number": "A-116BA522",
+            "account_number": "A-TEST0001",
         }
 
     monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
 
     flow = config_flow_module.EonNextRatesConfigFlow()
     flow.hass = object()
-    flow._configured_ids.add("A-116BA522")
+    flow._configured_ids.add("A-TEST0001")
 
     with pytest.raises(_AbortFlow, match="already_configured"):
         await flow.async_step_user({"username": "user@example.com", "password": "secret"})

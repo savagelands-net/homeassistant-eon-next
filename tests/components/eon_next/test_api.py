@@ -62,7 +62,7 @@ def _token_payload(token: str, refresh_token: str, exp: int) -> dict[str, Any]:
     }
 
 
-def _viewer_payload(account_number: str = "A-116BA522") -> dict[str, Any]:
+def _viewer_payload(account_number: str = "A-TEST0001") -> dict[str, Any]:
     return {
         "data": {
             "viewer": {
@@ -179,12 +179,12 @@ def test_build_tariff_snapshot_allows_missing_next_window() -> None:
 def test_select_account_number_returns_first_account_number() -> None:
     viewer = {
         "accounts": [
-            {"__typename": "AccountType", "number": "A-116BA522"},
+            {"__typename": "AccountType", "number": "A-TEST0001"},
             {"__typename": "AccountType", "number": "A-SECOND"},
         ]
     }
 
-    assert select_account_number(viewer) == "A-116BA522"
+    assert select_account_number(viewer) == "A-TEST0001"
 
 
 def test_select_account_number_raises_when_accounts_are_missing() -> None:
@@ -337,7 +337,7 @@ def test_client_discovers_account_and_fetches_tariff_snapshot() -> None:
     agreement_payload = {
         "data": {
             "account": {
-                "number": "A-116BA522",
+                "number": "A-TEST0001",
                 "electricityAgreements": [
                     {
                         "id": "agreement-current",
@@ -396,9 +396,9 @@ def test_client_discovers_account_and_fetches_tariff_snapshot() -> None:
     assert session.requests[1]["json"]["query"] == VIEWER_QUERY
     assert session.requests[1]["headers"]["authorization"] == "JWT access-1"
     assert session.requests[2]["json"]["query"] == AGREEMENTS_QUERY
-    assert session.requests[2]["json"]["variables"] == {"accountNumber": "A-116BA522"}
+    assert session.requests[2]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert session.requests[3]["json"]["query"] == AGREEMENTS_QUERY
-    assert session.requests[3]["json"]["variables"] == {"accountNumber": "A-116BA522"}
+    assert session.requests[3]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
 
 
 def test_client_refreshes_stale_token_before_reuse() -> None:
@@ -409,7 +409,7 @@ def test_client_refreshes_stale_token_before_reuse() -> None:
             {
                 "data": {
                     "account": {
-                        "number": "A-116BA522",
+                        "number": "A-TEST0001",
                         "electricityAgreements": [
                             {
                                 "id": "agreement-current",
@@ -474,7 +474,7 @@ def test_client_refreshes_stale_token_before_reuse() -> None:
     first_account_number = asyncio.run(client.async_discover_account_number())
     second_account_number = asyncio.run(client.async_discover_account_number())
 
-    assert first_account_number == "A-116BA522"
+    assert first_account_number == "A-TEST0001"
     assert second_account_number == "A-SECOND"
     assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
     assert session.requests[3]["json"]["query"] == REFRESH_MUTATION
@@ -491,7 +491,7 @@ def test_client_retries_once_with_new_token_after_auth_failure() -> None:
             {
                 "data": {
                     "account": {
-                        "number": "A-116BA522",
+                        "number": "A-TEST0001",
                         "electricityAgreements": [
                             {
                                 "id": "agreement-current",
@@ -521,7 +521,7 @@ def test_client_retries_once_with_new_token_after_auth_failure() -> None:
 
     account_number = asyncio.run(client.async_discover_account_number())
 
-    assert account_number == "A-116BA522"
+    assert account_number == "A-TEST0001"
     assert session.requests[1]["headers"]["authorization"] == "JWT access-1"
     assert session.requests[2]["json"]["query"] == REFRESH_MUTATION
     assert session.requests[3]["headers"]["authorization"] == "JWT access-2"
