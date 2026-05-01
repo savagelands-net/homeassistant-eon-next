@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect E.ON Next",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid authentication",
+      "cannot_connect": "Failed to connect",
+      "unsupported_tariff": "This account does not expose a supported half-hourly tariff"
+    },
+    "abort": {
+      "already_configured": "Account is already configured"
+    }
+  }
+}

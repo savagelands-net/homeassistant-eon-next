@@ -1,0 +1,9 @@
+{
+  "domain": "eon_next",
+  "name": "E.ON Next",
+  "version": "0.1.0",
+  "config_flow": true,
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "requirements": []
+}
