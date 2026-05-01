@@ -2,6 +2,8 @@
 
 Home Assistant custom integration for E.ON Next.
 
+> Note: This integration is being developed with the help of AI-assisted tooling, so parts of the project are intentionally being built in a fast-moving, "vibe coding" style while the integration matures.
+
 ## Current features
 
 - Live VAT-inclusive import rate
