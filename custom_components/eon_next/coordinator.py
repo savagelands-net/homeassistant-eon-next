@@ -15,18 +15,18 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .api import EonNextRatesAuthError, EonNextRatesError, TariffSnapshot
+from .api import AccountSnapshot, EonNextRatesAuthError, EonNextRatesError
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class _TariffSnapshotClient(Protocol):
-    async def async_get_tariff_snapshot(self) -> TariffSnapshot: ...
+class _AccountSnapshotClient(Protocol):
+    async def async_get_account_snapshot(self) -> AccountSnapshot: ...
 
 
-class EonNextRatesCoordinator(DataUpdateCoordinator[TariffSnapshot]):
-    def __init__(self, hass: HomeAssistant, client: _TariffSnapshotClient) -> None:
+class EonNextRatesCoordinator(DataUpdateCoordinator[AccountSnapshot]):
+    def __init__(self, hass: HomeAssistant, client: _AccountSnapshotClient) -> None:
         super().__init__(
             hass,
             _LOGGER,
@@ -35,9 +35,9 @@ class EonNextRatesCoordinator(DataUpdateCoordinator[TariffSnapshot]):
         )
         self._client = client
 
-    async def _async_update_data(self) -> TariffSnapshot:
+    async def _async_update_data(self) -> AccountSnapshot:
         try:
-            return await self._client.async_get_tariff_snapshot()
+            return await self._client.async_get_account_snapshot()
         except EonNextRatesAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except EonNextRatesError as err:

@@ -32,7 +32,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, str]) -> dict[str,
     )
 
     account_number = await client.async_discover_account_number()
-    await client.async_get_tariff_snapshot()
+    await client.async_get_account_snapshot()
 
     return {
         "title": f"E.ON Next {account_number}",

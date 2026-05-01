@@ -69,10 +69,16 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
 
 
 @dataclass(frozen=True, slots=True)
-class TariffSnapshot:
+class AccountSnapshot:
     current_rate_gbp_per_kwh: float
     next_rate_gbp_per_kwh: float | None
     next_rate_change_at: datetime | None
+    account_number: str
+    current_window_end: datetime
+    next_window_start: datetime | None
+    agreement_valid_from: datetime
+    agreement_valid_to: datetime | None
+    pre_vat_standing_charge_gbp_per_day: float | None
     tariff_name: str
     tariff_code: str
     standing_charge_gbp_per_day: float
@@ -275,7 +281,7 @@ class EonNextRatesClient:
                 agreement = select_active_half_hourly_agreement(
                     account_data["account"], now
                 )
-                build_tariff_snapshot(agreement, now)
+                build_account_snapshot(account_data["account"], agreement, now)
             except EonNextRatesUnsupportedError:
                 continue
 
@@ -286,7 +292,7 @@ class EonNextRatesClient:
         )
         return self._account_number
 
-    async def async_get_tariff_snapshot(self) -> TariffSnapshot:
+    async def async_get_account_snapshot(self) -> AccountSnapshot:
         if self._account_number is None:
             self._account_number = await self.async_discover_account_number()
 
@@ -295,8 +301,9 @@ class EonNextRatesClient:
             AGREEMENTS_QUERY,
             {"accountNumber": self._account_number},
         )
-        agreement = select_active_half_hourly_agreement(data["account"], now)
-        return build_tariff_snapshot(agreement, now)
+        account = data["account"]
+        agreement = select_active_half_hourly_agreement(account, now)
+        return build_account_snapshot(account, agreement, now)
 
     def _store_token_state(self, token_payload: dict[str, Any]) -> None:
         self._token = token_payload["token"]
@@ -331,6 +338,13 @@ def _pence_to_gbp(value: float) -> float:
     return value / 100
 
 
+def _optional_pence_to_gbp(value: float | None) -> float | None:
+    if value is None:
+        return None
+
+    return _pence_to_gbp(value)
+
+
 def _token_expiry_datetime(payload: dict[str, Any] | None) -> datetime | None:
     if not isinstance(payload, dict):
         return None
@@ -355,7 +369,13 @@ def _is_auth_error(errors: list[dict[str, Any]]) -> bool:
     return False
 
 
-def build_tariff_snapshot(agreement: dict, now: datetime) -> TariffSnapshot:
+def build_account_snapshot(account: dict, agreement: dict, now: datetime) -> AccountSnapshot:
+    account_number = account.get("number")
+    if account_number is None:
+        raise EonNextRatesUnsupportedError(
+            "Account payload missing required field(s): number"
+        )
+
     tariff = agreement["tariff"]
     tariff_type = tariff.get("__typename")
     if tariff_type != "HalfHourlyTariff":
@@ -382,7 +402,12 @@ def build_tariff_snapshot(agreement: dict, now: datetime) -> TariffSnapshot:
 
     for unit_rate in unit_rates:
         valid_from = _parse_datetime(unit_rate["validFrom"])
-        valid_to = _parse_datetime(unit_rate["validTo"])
+        valid_to = _parse_datetime(unit_rate.get("validTo"))
+
+        if valid_from <= now and valid_to is None:
+            raise EonNextRatesUnsupportedError(
+                "Current HalfHourlyTariff window is missing validTo"
+            )
 
         if valid_from <= now < valid_to:
             current_window = unit_rate
@@ -403,6 +428,11 @@ def build_tariff_snapshot(agreement: dict, now: datetime) -> TariffSnapshot:
         )
 
     current_window_end = _parse_datetime(current_window["validTo"])
+    if current_window_end is None:
+        raise EonNextRatesUnsupportedError(
+            "Current HalfHourlyTariff window is missing validTo"
+        )
+
     next_window_start = None
 
     if next_window is not None:
@@ -414,12 +444,28 @@ def build_tariff_snapshot(agreement: dict, now: datetime) -> TariffSnapshot:
             f"got gap between {current_window['validTo']} and {next_window['validFrom']}"
         )
 
-    return TariffSnapshot(
+    agreement_valid_from = _parse_datetime(agreement.get("validFrom"))
+    if agreement_valid_from is None:
+        raise EonNextRatesUnsupportedError(
+            "Active agreement payload missing required field(s): validFrom"
+        )
+
+    agreement_valid_to = _parse_datetime(agreement.get("validTo"))
+
+    return AccountSnapshot(
         current_rate_gbp_per_kwh=_pence_to_gbp(current_window["value"]),
         next_rate_gbp_per_kwh=(
             _pence_to_gbp(next_window["value"]) if next_window is not None else None
         ),
         next_rate_change_at=next_window_start,
+        account_number=account_number,
+        current_window_end=current_window_end,
+        next_window_start=next_window_start,
+        agreement_valid_from=agreement_valid_from,
+        agreement_valid_to=agreement_valid_to,
+        pre_vat_standing_charge_gbp_per_day=_optional_pence_to_gbp(
+            tariff.get("preVatStandingCharge")
+        ),
         tariff_name=tariff["displayName"],
         tariff_code=tariff["tariffCode"],
         standing_charge_gbp_per_day=_pence_to_gbp(tariff["standingCharge"]),

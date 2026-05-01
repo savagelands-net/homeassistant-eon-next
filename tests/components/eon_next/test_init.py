@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from custom_components.eon_next.api import TariffSnapshot
+from custom_components.eon_next.api import AccountSnapshot
 from custom_components.eon_next.const import DOMAIN, PLATFORMS
 
 
@@ -182,11 +182,17 @@ def coordinator_module(integration_stubs):
 
 
 @pytest.fixture
-def snapshot() -> TariffSnapshot:
-    return TariffSnapshot(
+def snapshot() -> AccountSnapshot:
+    return AccountSnapshot(
         current_rate_gbp_per_kwh=0.239022,
         next_rate_gbp_per_kwh=0.245,
         next_rate_change_at=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        account_number="A-TEST0001",
+        current_window_end=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        next_window_start=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        agreement_valid_from=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        agreement_valid_to=None,
+        pre_vat_standing_charge_gbp_per_day=0.57143,
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
@@ -271,7 +277,7 @@ async def test_async_step_user_creates_entry_after_validating_account(
         async def async_discover_account_number(self) -> str:
             return "A-TEST0001"
 
-        async def async_get_tariff_snapshot(self) -> TariffSnapshot:
+        async def async_get_account_snapshot(self) -> AccountSnapshot:
             return snapshot
 
     monkeypatch.setattr(config_flow_module, "EonNextRatesClient", _Client)
@@ -414,7 +420,7 @@ async def test_coordinator_raises_config_entry_auth_failed_for_auth_errors(
     coordinator_module,
 ) -> None:
     class _Client:
-        async def async_get_tariff_snapshot(self) -> TariffSnapshot:
+        async def async_get_account_snapshot(self) -> AccountSnapshot:
             raise coordinator_module.EonNextRatesAuthError
 
     coordinator = coordinator_module.EonNextRatesCoordinator(hass=object(), client=_Client())
@@ -428,7 +434,7 @@ async def test_coordinator_wraps_non_auth_errors_in_update_failed(
     coordinator_module,
 ) -> None:
     class _Client:
-        async def async_get_tariff_snapshot(self) -> TariffSnapshot:
+        async def async_get_account_snapshot(self) -> AccountSnapshot:
             raise coordinator_module.EonNextRatesError("offline")
 
     coordinator = coordinator_module.EonNextRatesCoordinator(hass=object(), client=_Client())

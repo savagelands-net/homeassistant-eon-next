@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from custom_components.eon_next.api import TariffSnapshot
+from custom_components.eon_next.api import AccountSnapshot
 from custom_components.eon_next.const import DOMAIN
 
 
@@ -140,11 +140,17 @@ def coordinator_module(homeassistant_stubs):
 
 
 @pytest.fixture
-def snapshot() -> TariffSnapshot:
-    return TariffSnapshot(
+def snapshot() -> AccountSnapshot:
+    return AccountSnapshot(
         current_rate_gbp_per_kwh=0.239022,
         next_rate_gbp_per_kwh=0.245,
         next_rate_change_at=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        account_number="A-TEST0001",
+        current_window_end=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        next_window_start=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        agreement_valid_from=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        agreement_valid_to=None,
+        pre_vat_standing_charge_gbp_per_day=0.57143,
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
@@ -152,7 +158,7 @@ def snapshot() -> TariffSnapshot:
 
 
 class _DummyCoordinator:
-    def __init__(self, data: TariffSnapshot) -> None:
+    def __init__(self, data: AccountSnapshot) -> None:
         self.data = data
 
 
@@ -170,7 +176,7 @@ async def test_async_setup_entry_uses_stored_coordinator(sensor_module, snapshot
         lambda entities: added_entities.extend(entities),
     )
 
-    assert len(added_entities) == 3
+    assert len(added_entities) == 6
     assert added_entities[0].coordinator is coordinator
 
 
@@ -183,10 +189,32 @@ def test_current_rate_sensor_exposes_value_unit_and_attributes(sensor_module, sn
     assert current_sensor.native_value == 0.239022
     assert current_sensor.native_unit_of_measurement == "GBP/kWh"
     assert current_sensor.extra_state_attributes == {
+        "account_number": "A-TEST0001",
         "tariff_name": "Next Drive Smart V5.2",
         "tariff_code": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         "standing_charge_gbp_per_day": 0.6000015,
+        "pre_vat_standing_charge_gbp_per_day": 0.57143,
+        "current_window_end": datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        "next_window_start": datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        "agreement_valid_from": datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        "agreement_valid_to": None,
     }
+
+
+def test_standing_charge_and_account_number_sensors_expose_expected_values(
+    sensor_module, snapshot
+) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+    standing_charge_sensor = entities[3]
+    pre_vat_standing_charge_sensor = entities[4]
+    account_number_sensor = entities[5]
+
+    assert standing_charge_sensor.native_value == 0.6000015
+    assert standing_charge_sensor.native_unit_of_measurement == "GBP/day"
+    assert pre_vat_standing_charge_sensor.native_value == 0.57143
+    assert pre_vat_standing_charge_sensor.native_unit_of_measurement == "GBP/day"
+    assert account_number_sensor.native_value == "A-TEST0001"
+    assert account_number_sensor.native_unit_of_measurement is None
 
 
 def test_next_rate_change_sensor_exposes_expected_datetime(sensor_module, snapshot) -> None:
@@ -206,7 +234,7 @@ async def test_coordinator_fetches_snapshot_and_uses_default_interval(
         def __init__(self) -> None:
             self.calls = 0
 
-        async def async_get_tariff_snapshot(self) -> TariffSnapshot:
+        async def async_get_account_snapshot(self) -> AccountSnapshot:
             self.calls += 1
             return snapshot
 
@@ -223,7 +251,7 @@ async def test_coordinator_fetches_snapshot_and_uses_default_interval(
 @pytest.mark.asyncio
 async def test_coordinator_wraps_client_errors_in_update_failed(coordinator_module) -> None:
     class _Client:
-        async def async_get_tariff_snapshot(self) -> TariffSnapshot:
+        async def async_get_account_snapshot(self) -> AccountSnapshot:
             raise coordinator_module.EonNextRatesError("boom")
 
     coordinator = coordinator_module.EonNextRatesCoordinator(hass=object(), client=_Client())

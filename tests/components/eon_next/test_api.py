@@ -11,11 +11,11 @@ from custom_components.eon_next.api import (
     LOGIN_MUTATION,
     REFRESH_MUTATION,
     VIEWER_QUERY,
+    AccountSnapshot,
     EonNextRatesAuthError,
     EonNextRatesClient,
     EonNextRatesUnsupportedError,
-    TariffSnapshot,
-    build_tariff_snapshot,
+    build_account_snapshot,
     select_account_number,
     select_active_half_hourly_agreement,
 )
@@ -87,6 +87,10 @@ def _viewer_payload_for_accounts(*account_numbers: str) -> dict[str, Any]:
     }
 
 
+def _account_payload(account_number: str = "A-TEST0001") -> dict[str, Any]:
+    return {"number": account_number}
+
+
 def _auth_error_payload() -> dict[str, Any]:
     return {
         "errors": [
@@ -100,6 +104,8 @@ def _auth_error_payload() -> dict[str, Any]:
 
 def test_build_tariff_snapshot_selects_current_and_next_windows() -> None:
     agreement = {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
         "tariff": {
             "__typename": "HalfHourlyTariff",
             "displayName": "Next Drive Smart V5.2",
@@ -127,20 +133,67 @@ def test_build_tariff_snapshot_selects_current_and_next_windows() -> None:
 
     now = datetime(2026, 4, 30, 20, 30, tzinfo=UTC)
 
-    snapshot = build_tariff_snapshot(agreement, now)
+    snapshot = build_account_snapshot(_account_payload(), agreement, now)
 
-    assert snapshot == TariffSnapshot(
+    assert snapshot == AccountSnapshot(
         current_rate_gbp_per_kwh=0.239022,
         next_rate_gbp_per_kwh=0.029925,
         next_rate_change_at=datetime(2026, 4, 30, 23, 0, tzinfo=UTC),
+        account_number="A-TEST0001",
+        current_window_end=datetime(2026, 4, 30, 23, 0, tzinfo=UTC),
+        next_window_start=datetime(2026, 4, 30, 23, 0, tzinfo=UTC),
+        agreement_valid_from=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        agreement_valid_to=None,
+        pre_vat_standing_charge_gbp_per_day=None,
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
     )
 
 
+def test_build_account_snapshot_includes_account_and_agreement_metadata() -> None:
+    agreement = {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
+        "tariff": {
+            "__typename": "HalfHourlyTariff",
+            "displayName": "Next Drive Smart V5.2",
+            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+            "standingCharge": 60.00015,
+            "preVatStandingCharge": 57.143,
+            "unitRates": [
+                {
+                    "value": 23.9022,
+                    "validFrom": "2026-05-01T12:00:00+00:00",
+                    "validTo": "2026-05-01T12:30:00+00:00",
+                },
+                {
+                    "value": 24.5,
+                    "validFrom": "2026-05-01T12:30:00+00:00",
+                    "validTo": "2026-05-01T13:00:00+00:00",
+                },
+            ],
+        },
+    }
+
+    snapshot = build_account_snapshot(
+        _account_payload(),
+        agreement,
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.account_number == "A-TEST0001"
+    assert snapshot.current_window_end == datetime(2026, 5, 1, 12, 30, tzinfo=UTC)
+    assert snapshot.next_window_start == datetime(2026, 5, 1, 12, 30, tzinfo=UTC)
+    assert snapshot.agreement_valid_from == datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
+    assert snapshot.agreement_valid_to is None
+    assert snapshot.pre_vat_standing_charge_gbp_per_day == 0.57143
+
+
 def test_build_tariff_snapshot_allows_missing_next_window() -> None:
     agreement = {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
         "tariff": {
             "__typename": "HalfHourlyTariff",
             "displayName": "Next Drive Smart V5.2",
@@ -161,15 +214,22 @@ def test_build_tariff_snapshot_allows_missing_next_window() -> None:
         }
     }
 
-    snapshot = build_tariff_snapshot(
+    snapshot = build_account_snapshot(
+        _account_payload(),
         agreement,
         datetime(2026, 5, 1, 9, 50, tzinfo=UTC),
     )
 
-    assert snapshot == TariffSnapshot(
+    assert snapshot == AccountSnapshot(
         current_rate_gbp_per_kwh=0.239022,
         next_rate_gbp_per_kwh=None,
         next_rate_change_at=None,
+        account_number="A-TEST0001",
+        current_window_end=datetime(2026, 5, 1, 23, 0, tzinfo=UTC),
+        next_window_start=None,
+        agreement_valid_from=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        agreement_valid_to=None,
+        pre_vat_standing_charge_gbp_per_day=None,
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
@@ -333,7 +393,7 @@ def test_client_discovers_first_account_with_usable_snapshot() -> None:
     assert session.requests[3]["json"]["variables"] == {"accountNumber": "A-SUPPORTED"}
 
 
-def test_client_discovers_account_and_fetches_tariff_snapshot() -> None:
+def test_client_discovers_account_and_fetches_account_snapshot() -> None:
     agreement_payload = {
         "data": {
             "account": {
@@ -382,12 +442,18 @@ def test_client_discovers_account_and_fetches_tariff_snapshot() -> None:
         now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
     )
 
-    snapshot = asyncio.run(client.async_get_tariff_snapshot())
+    snapshot = asyncio.run(client.async_get_account_snapshot())
 
-    assert snapshot == TariffSnapshot(
+    assert snapshot == AccountSnapshot(
         current_rate_gbp_per_kwh=0.239022,
         next_rate_gbp_per_kwh=0.245,
         next_rate_change_at=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        account_number="A-TEST0001",
+        current_window_end=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        next_window_start=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        agreement_valid_from=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        agreement_valid_to=datetime(2026, 6, 1, 0, 0, tzinfo=UTC),
+        pre_vat_standing_charge_gbp_per_day=0.57143,
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
@@ -544,6 +610,8 @@ def test_client_raises_after_single_auth_retry_fails() -> None:
 
 def test_build_tariff_snapshot_rejects_non_half_hourly_tariffs() -> None:
     agreement = {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
         "tariff": {
             "__typename": "DayNightTariff",
             "displayName": "Legacy Two Rate",
@@ -553,11 +621,17 @@ def test_build_tariff_snapshot_rejects_non_half_hourly_tariffs() -> None:
     }
 
     with pytest.raises(EonNextRatesUnsupportedError, match="HalfHourlyTariff"):
-        build_tariff_snapshot(agreement, datetime(2026, 4, 30, 20, 30, tzinfo=UTC))
+        build_account_snapshot(
+            _account_payload(),
+            agreement,
+            datetime(2026, 4, 30, 20, 30, tzinfo=UTC),
+        )
 
 
 def test_build_tariff_snapshot_raises_when_now_is_not_covered() -> None:
     agreement = {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
         "tariff": {
             "__typename": "HalfHourlyTariff",
             "displayName": "Next Drive Smart V5.2",
@@ -579,11 +653,17 @@ def test_build_tariff_snapshot_raises_when_now_is_not_covered() -> None:
     }
 
     with pytest.raises(EonNextRatesUnsupportedError, match="No current HalfHourlyTariff window"):
-        build_tariff_snapshot(agreement, datetime(2026, 4, 30, 20, 30, tzinfo=UTC))
+        build_account_snapshot(
+            _account_payload(),
+            agreement,
+            datetime(2026, 4, 30, 20, 30, tzinfo=UTC),
+        )
 
 
 def test_build_tariff_snapshot_returns_none_when_next_window_is_missing() -> None:
     agreement = {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
         "tariff": {
             "__typename": "HalfHourlyTariff",
             "displayName": "Next Drive Smart V5.2",
@@ -599,16 +679,66 @@ def test_build_tariff_snapshot_returns_none_when_next_window_is_missing() -> Non
         }
     }
 
-    snapshot = build_tariff_snapshot(agreement, datetime(2026, 4, 30, 20, 30, tzinfo=UTC))
+    snapshot = build_account_snapshot(
+        _account_payload(),
+        agreement,
+        datetime(2026, 4, 30, 20, 30, tzinfo=UTC),
+    )
 
-    assert snapshot == TariffSnapshot(
+    assert snapshot == AccountSnapshot(
         current_rate_gbp_per_kwh=0.239022,
         next_rate_gbp_per_kwh=None,
         next_rate_change_at=None,
+        account_number="A-TEST0001",
+        current_window_end=datetime(2026, 4, 30, 23, 0, tzinfo=UTC),
+        next_window_start=None,
+        agreement_valid_from=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        agreement_valid_to=None,
+        pre_vat_standing_charge_gbp_per_day=None,
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
     )
+
+
+@pytest.mark.parametrize(
+    ("valid_to_value", "include_valid_to"),
+    [
+        (None, True),
+        (None, False),
+    ],
+)
+def test_build_tariff_snapshot_raises_when_current_window_is_missing_valid_to(
+    valid_to_value: str | None, include_valid_to: bool
+) -> None:
+    current_window: dict[str, Any] = {
+        "value": 23.9022,
+        "validFrom": "2026-04-30T05:00:00+00:00",
+    }
+    if include_valid_to:
+        current_window["validTo"] = valid_to_value
+
+    agreement = {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
+        "tariff": {
+            "__typename": "HalfHourlyTariff",
+            "displayName": "Next Drive Smart V5.2",
+            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+            "standingCharge": 60.00015,
+            "unitRates": [current_window],
+        },
+    }
+
+    with pytest.raises(
+        EonNextRatesUnsupportedError,
+        match="Current HalfHourlyTariff window is missing validTo",
+    ):
+        build_account_snapshot(
+            _account_payload(),
+            agreement,
+            datetime(2026, 4, 30, 20, 30, tzinfo=UTC),
+        )
 
 
 @pytest.mark.parametrize(
@@ -641,13 +771,17 @@ def test_build_tariff_snapshot_rejects_incomplete_tariff_payloads(
         tariff[field_name] = field_value
 
     with pytest.raises(EonNextRatesUnsupportedError, match=field_name):
-        build_tariff_snapshot(
-            {"tariff": tariff}, datetime(2026, 4, 30, 20, 30, tzinfo=UTC)
+        build_account_snapshot(
+            _account_payload(),
+            {"validFrom": "2026-04-01T00:00:00+00:00", "validTo": None, "tariff": tariff},
+            datetime(2026, 4, 30, 20, 30, tzinfo=UTC),
         )
 
 
 def test_build_tariff_snapshot_raises_when_next_window_is_not_contiguous() -> None:
     agreement = {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
         "tariff": {
             "__typename": "HalfHourlyTariff",
             "displayName": "Next Drive Smart V5.2",
@@ -669,4 +803,8 @@ def test_build_tariff_snapshot_raises_when_next_window_is_not_contiguous() -> No
     }
 
     with pytest.raises(EonNextRatesUnsupportedError, match="contiguous"):
-        build_tariff_snapshot(agreement, datetime(2026, 4, 30, 20, 30, tzinfo=UTC))
+        build_account_snapshot(
+            _account_payload(),
+            agreement,
+            datetime(2026, 4, 30, 20, 30, tzinfo=UTC),
+        )
