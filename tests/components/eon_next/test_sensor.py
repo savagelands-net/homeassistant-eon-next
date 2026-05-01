@@ -154,12 +154,25 @@ def snapshot() -> AccountSnapshot:
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
+        latest_meter_reading_kwh=12346.0,
+        latest_meter_reading_at=datetime(2026, 5, 2, 11, 0, tzinfo=UTC),
+        latest_meter_reading_source="SMART",
+        latest_meter_reading_type="actual",
+        latest_meter_reading_register_identifier="00001",
+        latest_meter_reading_register_name="IMP",
+        latest_meter_reading_register_digits=5,
+        latest_meter_reading_register_is_quarantined=False,
+        meter_point_mpan="0012345678901",
     )
 
 
 class _DummyCoordinator:
     def __init__(self, data: AccountSnapshot) -> None:
         self.data = data
+
+
+def _entity_by_suffix(entities, suffix: str):
+    return next(entity for entity in entities if entity.unique_id == f"entry-123_{suffix}")
 
 
 @pytest.mark.asyncio
@@ -176,7 +189,7 @@ async def test_async_setup_entry_uses_stored_coordinator(sensor_module, snapshot
         lambda entities: added_entities.extend(entities),
     )
 
-    assert len(added_entities) == 6
+    assert len(added_entities) == 8
     assert added_entities[0].coordinator is coordinator
 
 
@@ -224,6 +237,36 @@ def test_next_rate_change_sensor_exposes_expected_datetime(sensor_module, snapsh
     assert next_change_sensor.name == "E.ON Next Rate Change"
     assert next_change_sensor.unique_id == "entry-123_next_rate_change_at"
     assert next_change_sensor.native_value == datetime(2026, 5, 1, 12, 30, tzinfo=UTC)
+
+
+def test_latest_meter_reading_sensor_exposes_value_unit_and_attributes(
+    sensor_module, snapshot
+) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+    reading_sensor = _entity_by_suffix(entities, "latest_meter_reading")
+
+    assert reading_sensor.name == "E.ON Latest Meter Reading"
+    assert reading_sensor.native_value == 12346.0
+    assert reading_sensor.native_unit_of_measurement == "kWh"
+    assert reading_sensor.extra_state_attributes == {
+        "meter_point_mpan": "0012345678901",
+        "latest_meter_reading_source": "SMART",
+        "latest_meter_reading_type": "actual",
+        "latest_meter_reading_register_identifier": "00001",
+        "latest_meter_reading_register_name": "IMP",
+        "latest_meter_reading_register_digits": 5,
+        "latest_meter_reading_register_is_quarantined": False,
+    }
+
+
+def test_latest_meter_reading_timestamp_sensor_exposes_expected_datetime(
+    sensor_module, snapshot
+) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+    timestamp_sensor = _entity_by_suffix(entities, "latest_meter_reading_at")
+
+    assert timestamp_sensor.name == "E.ON Latest Meter Reading Time"
+    assert timestamp_sensor.native_value == datetime(2026, 5, 2, 11, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

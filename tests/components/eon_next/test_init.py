@@ -196,6 +196,15 @@ def snapshot() -> AccountSnapshot:
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
+        latest_meter_reading_kwh=12346.0,
+        latest_meter_reading_at=datetime(2026, 5, 2, 11, 0, tzinfo=UTC),
+        latest_meter_reading_source="SMART",
+        latest_meter_reading_type="actual",
+        latest_meter_reading_register_identifier="00001",
+        latest_meter_reading_register_name="IMP",
+        latest_meter_reading_register_digits=5,
+        latest_meter_reading_register_is_quarantined=False,
+        meter_point_mpan="0012345678901",
     )
 
 

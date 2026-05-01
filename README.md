@@ -11,10 +11,10 @@ Home Assistant custom integration for E.ON Next.
 - Next rate change timestamp when available
 - Standing charge sensors including pre-VAT standing charge
 - Active tariff and account metadata, including account number and agreement window attributes
+- Latest electricity meter reading and reading timestamp when available
 
 ## Planned features
 
-- Meter readings
 - EV / charger / smart-tariff related entities
 - Historical cost counters for Prometheus and Grafana
 

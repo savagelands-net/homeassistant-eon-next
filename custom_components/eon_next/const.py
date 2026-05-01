@@ -15,3 +15,12 @@ ATTR_CURRENT_WINDOW_END = "current_window_end"
 ATTR_NEXT_WINDOW_START = "next_window_start"
 ATTR_AGREEMENT_VALID_FROM = "agreement_valid_from"
 ATTR_AGREEMENT_VALID_TO = "agreement_valid_to"
+ATTR_METER_POINT_MPAN = "meter_point_mpan"
+ATTR_LATEST_METER_READING_SOURCE = "latest_meter_reading_source"
+ATTR_LATEST_METER_READING_TYPE = "latest_meter_reading_type"
+ATTR_LATEST_METER_READING_REGISTER_IDENTIFIER = "latest_meter_reading_register_identifier"
+ATTR_LATEST_METER_READING_REGISTER_NAME = "latest_meter_reading_register_name"
+ATTR_LATEST_METER_READING_REGISTER_DIGITS = "latest_meter_reading_register_digits"
+ATTR_LATEST_METER_READING_REGISTER_IS_QUARANTINED = (
+    "latest_meter_reading_register_is_quarantined"
+)

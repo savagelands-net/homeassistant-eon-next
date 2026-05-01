@@ -20,6 +20,13 @@ from .const import (
     ATTR_AGREEMENT_VALID_FROM,
     ATTR_AGREEMENT_VALID_TO,
     ATTR_CURRENT_WINDOW_END,
+    ATTR_LATEST_METER_READING_REGISTER_DIGITS,
+    ATTR_LATEST_METER_READING_REGISTER_IDENTIFIER,
+    ATTR_LATEST_METER_READING_REGISTER_IS_QUARANTINED,
+    ATTR_LATEST_METER_READING_REGISTER_NAME,
+    ATTR_LATEST_METER_READING_SOURCE,
+    ATTR_LATEST_METER_READING_TYPE,
+    ATTR_METER_POINT_MPAN,
     ATTR_NEXT_WINDOW_START,
     ATTR_PRE_VAT_STANDING_CHARGE_GBP_PER_DAY,
     ATTR_STANDING_CHARGE_GBP_PER_DAY,
@@ -31,13 +38,14 @@ from .coordinator import EonNextRatesCoordinator
 
 RATE_UNIT = "GBP/kWh"
 CHARGE_UNIT = "GBP/day"
+READING_UNIT = "kWh"
 
 
 @dataclass(frozen=True, kw_only=True)
 class EonRateSensorDescription(SensorEntityDescription):
     value_attr: str
     unique_id_suffix: str
-    include_extra_attributes: bool = False
+    attribute_fields: dict[str, str] | None = None
 
 
 SENSOR_DESCRIPTIONS = (
@@ -47,7 +55,17 @@ SENSOR_DESCRIPTIONS = (
         native_unit_of_measurement=RATE_UNIT,
         value_attr="current_rate_gbp_per_kwh",
         unique_id_suffix="current_import_rate",
-        include_extra_attributes=True,
+        attribute_fields={
+            ATTR_ACCOUNT_NUMBER: "account_number",
+            ATTR_TARIFF_NAME: "tariff_name",
+            ATTR_TARIFF_CODE: "tariff_code",
+            ATTR_STANDING_CHARGE_GBP_PER_DAY: "standing_charge_gbp_per_day",
+            ATTR_PRE_VAT_STANDING_CHARGE_GBP_PER_DAY: "pre_vat_standing_charge_gbp_per_day",
+            ATTR_CURRENT_WINDOW_END: "current_window_end",
+            ATTR_NEXT_WINDOW_START: "next_window_start",
+            ATTR_AGREEMENT_VALID_FROM: "agreement_valid_from",
+            ATTR_AGREEMENT_VALID_TO: "agreement_valid_to",
+        },
     ),
     EonRateSensorDescription(
         key="next_import_rate",
@@ -82,6 +100,31 @@ SENSOR_DESCRIPTIONS = (
         name="E.ON Account Number",
         value_attr="account_number",
         unique_id_suffix="account_number",
+    ),
+    EonRateSensorDescription(
+        key="latest_meter_reading",
+        name="E.ON Latest Meter Reading",
+        native_unit_of_measurement=READING_UNIT,
+        value_attr="latest_meter_reading_kwh",
+        unique_id_suffix="latest_meter_reading",
+        attribute_fields={
+            ATTR_METER_POINT_MPAN: "meter_point_mpan",
+            ATTR_LATEST_METER_READING_SOURCE: "latest_meter_reading_source",
+            ATTR_LATEST_METER_READING_TYPE: "latest_meter_reading_type",
+            ATTR_LATEST_METER_READING_REGISTER_IDENTIFIER:
+                "latest_meter_reading_register_identifier",
+            ATTR_LATEST_METER_READING_REGISTER_NAME: "latest_meter_reading_register_name",
+            ATTR_LATEST_METER_READING_REGISTER_DIGITS: "latest_meter_reading_register_digits",
+            ATTR_LATEST_METER_READING_REGISTER_IS_QUARANTINED:
+                "latest_meter_reading_register_is_quarantined",
+        },
+    ),
+    EonRateSensorDescription(
+        key="latest_meter_reading_at",
+        name="E.ON Latest Meter Reading Time",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_attr="latest_meter_reading_at",
+        unique_id_suffix="latest_meter_reading_at",
     ),
 )
 
@@ -127,7 +170,8 @@ class EonNextRatesSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        if not self.entity_description.include_extra_attributes:
+        attribute_fields = self.entity_description.attribute_fields
+        if attribute_fields is None:
             return None
 
         snapshot: AccountSnapshot | None = self.coordinator.data
@@ -135,13 +179,6 @@ class EonNextRatesSensor(CoordinatorEntity, SensorEntity):
             return None
 
         return {
-            ATTR_ACCOUNT_NUMBER: snapshot.account_number,
-            ATTR_TARIFF_NAME: snapshot.tariff_name,
-            ATTR_TARIFF_CODE: snapshot.tariff_code,
-            ATTR_STANDING_CHARGE_GBP_PER_DAY: snapshot.standing_charge_gbp_per_day,
-            ATTR_PRE_VAT_STANDING_CHARGE_GBP_PER_DAY: snapshot.pre_vat_standing_charge_gbp_per_day,
-            ATTR_CURRENT_WINDOW_END: snapshot.current_window_end,
-            ATTR_NEXT_WINDOW_START: snapshot.next_window_start,
-            ATTR_AGREEMENT_VALID_FROM: snapshot.agreement_valid_from,
-            ATTR_AGREEMENT_VALID_TO: snapshot.agreement_valid_to,
+            attribute_name: getattr(snapshot, snapshot_attr)
+            for attribute_name, snapshot_attr in attribute_fields.items()
         }

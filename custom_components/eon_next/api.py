@@ -49,6 +49,22 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
       id
       validFrom
       validTo
+      meterPoint {
+        mpan
+        unbilledReadings {
+          readAt
+          readingSource
+          source
+          readingType
+          registers {
+            identifier
+            name
+            value
+            digits
+            isQuarantined
+          }
+        }
+      }
       tariff {
         __typename
         ... on HalfHourlyTariff {
@@ -82,6 +98,15 @@ class AccountSnapshot:
     tariff_name: str
     tariff_code: str
     standing_charge_gbp_per_day: float
+    latest_meter_reading_kwh: float | None = None
+    latest_meter_reading_at: datetime | None = None
+    latest_meter_reading_source: str | None = None
+    latest_meter_reading_type: str | None = None
+    latest_meter_reading_register_identifier: str | None = None
+    latest_meter_reading_register_name: str | None = None
+    latest_meter_reading_register_digits: int | None = None
+    latest_meter_reading_register_is_quarantined: bool | None = None
+    meter_point_mpan: str | None = None
 
 
 class EonNextRatesError(Exception):
@@ -345,6 +370,91 @@ def _optional_pence_to_gbp(value: float | None) -> float | None:
     return _pence_to_gbp(value)
 
 
+def _parse_meter_reading_value(value: str | None) -> float | None:
+    if value is None:
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _empty_meter_reading_fields(mpan: str | None) -> dict[str, Any]:
+    return {
+        "latest_meter_reading_kwh": None,
+        "latest_meter_reading_at": None,
+        "latest_meter_reading_source": None,
+        "latest_meter_reading_type": None,
+        "latest_meter_reading_register_identifier": None,
+        "latest_meter_reading_register_name": None,
+        "latest_meter_reading_register_digits": None,
+        "latest_meter_reading_register_is_quarantined": None,
+        "meter_point_mpan": mpan,
+    }
+
+
+def _latest_meter_reading_fields(meter_point: dict | None) -> dict[str, Any]:
+    if not isinstance(meter_point, dict):
+        return _empty_meter_reading_fields(None)
+
+    mpan = meter_point.get("mpan")
+    unbilled_readings = meter_point.get("unbilledReadings")
+    if unbilled_readings is None:
+        return _empty_meter_reading_fields(mpan)
+
+    if not isinstance(unbilled_readings, list):
+        return _empty_meter_reading_fields(mpan)
+
+    def _parse_read_at(reading: dict[str, Any]) -> datetime | None:
+        if not isinstance(reading, dict):
+            return None
+
+        try:
+            return _parse_datetime(reading.get("readAt"))
+        except ValueError:
+            return None
+
+    sorted_readings = sorted(
+        ((_parse_read_at(reading), reading) for reading in unbilled_readings),
+        key=lambda item: item[0] or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+
+    for read_at, reading in sorted_readings:
+        if read_at is None or not isinstance(reading, dict):
+            continue
+
+        registers = reading.get("registers")
+        if not isinstance(registers, list):
+            continue
+
+        for register in registers:
+            if not isinstance(register, dict):
+                continue
+
+            reading_value = _parse_meter_reading_value(register.get("value"))
+            if reading_value is None:
+                continue
+
+            return {
+                "latest_meter_reading_kwh": reading_value,
+                "latest_meter_reading_at": read_at,
+                "latest_meter_reading_source": reading.get("readingSource")
+                or reading.get("source"),
+                "latest_meter_reading_type": reading.get("readingType"),
+                "latest_meter_reading_register_identifier": register.get("identifier"),
+                "latest_meter_reading_register_name": register.get("name"),
+                "latest_meter_reading_register_digits": register.get("digits"),
+                "latest_meter_reading_register_is_quarantined": register.get(
+                    "isQuarantined"
+                ),
+                "meter_point_mpan": mpan,
+            }
+
+    return _empty_meter_reading_fields(mpan)
+
+
 def _token_expiry_datetime(payload: dict[str, Any] | None) -> datetime | None:
     if not isinstance(payload, dict):
         return None
@@ -451,6 +561,7 @@ def build_account_snapshot(account: dict, agreement: dict, now: datetime) -> Acc
         )
 
     agreement_valid_to = _parse_datetime(agreement.get("validTo"))
+    meter_reading_fields = _latest_meter_reading_fields(agreement.get("meterPoint"))
 
     return AccountSnapshot(
         current_rate_gbp_per_kwh=_pence_to_gbp(current_window["value"]),
@@ -469,4 +580,5 @@ def build_account_snapshot(account: dict, agreement: dict, now: datetime) -> Acc
         tariff_name=tariff["displayName"],
         tariff_code=tariff["tariffCode"],
         standing_charge_gbp_per_day=_pence_to_gbp(tariff["standingCharge"]),
+        **meter_reading_fields,
     )

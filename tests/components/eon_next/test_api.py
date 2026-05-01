@@ -91,6 +91,36 @@ def _account_payload(account_number: str = "A-TEST0001") -> dict[str, Any]:
     return {"number": account_number}
 
 
+def _agreement_payload_with_meter_readings(*readings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
+        "meterPoint": {
+            "mpan": "0012345678901",
+            "unbilledReadings": list(readings),
+        },
+        "tariff": {
+            "__typename": "HalfHourlyTariff",
+            "displayName": "Next Drive Smart V5.2",
+            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+            "standingCharge": 60.00015,
+            "preVatStandingCharge": 57.143,
+            "unitRates": [
+                {
+                    "value": 23.9022,
+                    "validFrom": "2026-05-01T12:00:00+00:00",
+                    "validTo": "2026-05-01T12:30:00+00:00",
+                },
+                {
+                    "value": 24.5,
+                    "validFrom": "2026-05-01T12:30:00+00:00",
+                    "validTo": "2026-05-01T13:00:00+00:00",
+                },
+            ],
+        },
+    }
+
+
 def _auth_error_payload() -> dict[str, Any]:
     return {
         "errors": [
@@ -152,29 +182,23 @@ def test_build_tariff_snapshot_selects_current_and_next_windows() -> None:
 
 
 def test_build_account_snapshot_includes_account_and_agreement_metadata() -> None:
-    agreement = {
-        "validFrom": "2026-04-01T00:00:00+00:00",
-        "validTo": None,
-        "tariff": {
-            "__typename": "HalfHourlyTariff",
-            "displayName": "Next Drive Smart V5.2",
-            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
-            "standingCharge": 60.00015,
-            "preVatStandingCharge": 57.143,
-            "unitRates": [
+    agreement = _agreement_payload_with_meter_readings(
+        {
+            "readAt": "2026-05-02T11:00:00+00:00",
+            "readingSource": "SMART",
+            "source": "ESTIMATE",
+            "readingType": "actual",
+            "registers": [
                 {
-                    "value": 23.9022,
-                    "validFrom": "2026-05-01T12:00:00+00:00",
-                    "validTo": "2026-05-01T12:30:00+00:00",
-                },
-                {
-                    "value": 24.5,
-                    "validFrom": "2026-05-01T12:30:00+00:00",
-                    "validTo": "2026-05-01T13:00:00+00:00",
-                },
+                    "identifier": "00001",
+                    "name": "IMP",
+                    "value": "12346.0",
+                    "digits": 5,
+                    "isQuarantined": False,
+                }
             ],
-        },
-    }
+        }
+    )
 
     snapshot = build_account_snapshot(
         _account_payload(),
@@ -188,6 +212,169 @@ def test_build_account_snapshot_includes_account_and_agreement_metadata() -> Non
     assert snapshot.agreement_valid_from == datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
     assert snapshot.agreement_valid_to is None
     assert snapshot.pre_vat_standing_charge_gbp_per_day == 0.57143
+    assert snapshot.latest_meter_reading_kwh == 12346.0
+    assert snapshot.latest_meter_reading_at == datetime(2026, 5, 2, 11, 0, tzinfo=UTC)
+    assert snapshot.latest_meter_reading_source == "SMART"
+    assert snapshot.latest_meter_reading_type == "actual"
+    assert snapshot.latest_meter_reading_register_identifier == "00001"
+    assert snapshot.latest_meter_reading_register_name == "IMP"
+    assert snapshot.latest_meter_reading_register_digits == 5
+    assert snapshot.latest_meter_reading_register_is_quarantined is False
+    assert snapshot.meter_point_mpan == "0012345678901"
+
+
+def test_build_account_snapshot_selects_latest_usable_meter_reading() -> None:
+    agreement = _agreement_payload_with_meter_readings(
+        {
+            "readAt": "2026-05-02T11:00:00+00:00",
+            "readingSource": "SMART",
+            "source": "MANUAL",
+            "readingType": "actual",
+            "registers": [
+                {
+                    "identifier": "00001",
+                    "name": "IMP",
+                    "value": "12346.0",
+                    "digits": 5,
+                    "isQuarantined": False,
+                }
+            ],
+        },
+        {
+            "readAt": "2026-05-02T12:00:00+00:00",
+            "readingSource": None,
+            "source": "SMART",
+            "readingType": "estimated",
+            "registers": [
+                {
+                    "identifier": "00002",
+                    "name": "EXP",
+                    "value": None,
+                    "digits": 5,
+                    "isQuarantined": True,
+                },
+                {
+                    "identifier": "00003",
+                    "name": "IMP",
+                    "value": "12347.5",
+                    "digits": 6,
+                    "isQuarantined": False,
+                },
+            ],
+        },
+        {
+            "readAt": None,
+            "readingSource": "SMART",
+            "source": "SMART",
+            "readingType": "actual",
+            "registers": [
+                {
+                    "identifier": "00004",
+                    "name": "IMP",
+                    "value": "99999",
+                    "digits": 5,
+                    "isQuarantined": False,
+                }
+            ],
+        },
+    )
+
+    snapshot = build_account_snapshot(
+        _account_payload(),
+        agreement,
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.latest_meter_reading_kwh == 12347.5
+    assert snapshot.latest_meter_reading_at == datetime(2026, 5, 2, 12, 0, tzinfo=UTC)
+    assert snapshot.latest_meter_reading_source == "SMART"
+    assert snapshot.latest_meter_reading_type == "estimated"
+    assert snapshot.latest_meter_reading_register_identifier == "00003"
+    assert snapshot.latest_meter_reading_register_name == "IMP"
+    assert snapshot.latest_meter_reading_register_digits == 6
+    assert snapshot.latest_meter_reading_register_is_quarantined is False
+    assert snapshot.meter_point_mpan == "0012345678901"
+
+
+def test_build_account_snapshot_returns_none_when_no_usable_meter_reading_exists() -> None:
+    agreement = _agreement_payload_with_meter_readings(
+        {
+            "readAt": "2026-05-02T11:00:00+00:00",
+            "readingSource": "SMART",
+            "source": "SMART",
+            "readingType": "actual",
+            "registers": {"identifier": "00001"},
+        },
+        {
+            "readAt": "not-a-datetime",
+            "readingSource": "SMART",
+            "source": "SMART",
+            "readingType": "actual",
+            "registers": [
+                {
+                    "identifier": "00002",
+                    "name": "IMP",
+                    "value": "12346.0",
+                    "digits": 5,
+                    "isQuarantined": False,
+                }
+            ],
+        },
+        {
+            "readAt": "2026-05-02T10:00:00+00:00",
+            "readingSource": "SMART",
+            "source": "SMART",
+            "readingType": "actual",
+            "registers": [
+                {
+                    "identifier": "00003",
+                    "name": "IMP",
+                    "value": None,
+                    "digits": 5,
+                    "isQuarantined": False,
+                }
+            ],
+        },
+    )
+
+    snapshot = build_account_snapshot(
+        _account_payload(),
+        agreement,
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.latest_meter_reading_kwh is None
+    assert snapshot.latest_meter_reading_at is None
+    assert snapshot.latest_meter_reading_source is None
+    assert snapshot.latest_meter_reading_type is None
+    assert snapshot.latest_meter_reading_register_identifier is None
+    assert snapshot.latest_meter_reading_register_name is None
+    assert snapshot.latest_meter_reading_register_digits is None
+    assert snapshot.latest_meter_reading_register_is_quarantined is None
+    assert snapshot.meter_point_mpan == "0012345678901"
+
+
+def test_build_account_snapshot_returns_none_when_unbilled_readings_is_not_a_list() -> None:
+    agreement = _agreement_payload_with_meter_readings()
+    agreement["meterPoint"]["unbilledReadings"] = {"readAt": "2026-05-02T11:00:00+00:00"}
+
+    snapshot = build_account_snapshot(
+        _account_payload(),
+        agreement,
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.current_rate_gbp_per_kwh == 0.239022
+    assert snapshot.next_rate_gbp_per_kwh == 0.245
+    assert snapshot.latest_meter_reading_kwh is None
+    assert snapshot.latest_meter_reading_at is None
+    assert snapshot.latest_meter_reading_source is None
+    assert snapshot.latest_meter_reading_type is None
+    assert snapshot.latest_meter_reading_register_identifier is None
+    assert snapshot.latest_meter_reading_register_name is None
+    assert snapshot.latest_meter_reading_register_digits is None
+    assert snapshot.latest_meter_reading_register_is_quarantined is None
+    assert snapshot.meter_point_mpan == "0012345678901"
 
 
 def test_build_tariff_snapshot_allows_missing_next_window() -> None:
@@ -403,6 +590,10 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
                         "id": "agreement-current",
                         "validFrom": "2026-04-01T00:00:00+00:00",
                         "validTo": "2026-06-01T00:00:00+00:00",
+                        "meterPoint": {
+                            "mpan": "0012345678901",
+                            "unbilledReadings": {"readAt": "2026-05-02T11:00:00+00:00"},
+                        },
                         "tariff": {
                             "__typename": "HalfHourlyTariff",
                             "displayName": "Next Drive Smart V5.2",
@@ -457,6 +648,15 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
         tariff_name="Next Drive Smart V5.2",
         tariff_code="E-TOU-NEXT_DRIVE_SMART_V5_2-N",
         standing_charge_gbp_per_day=0.6000015,
+        latest_meter_reading_kwh=None,
+        latest_meter_reading_at=None,
+        latest_meter_reading_source=None,
+        latest_meter_reading_type=None,
+        latest_meter_reading_register_identifier=None,
+        latest_meter_reading_register_name=None,
+        latest_meter_reading_register_digits=None,
+        latest_meter_reading_register_is_quarantined=None,
+        meter_point_mpan="0012345678901",
     )
     assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
     assert session.requests[1]["json"]["query"] == VIEWER_QUERY
