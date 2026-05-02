@@ -76,16 +76,18 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
                   title
                   postedDate
                   amounts {
-                    grossTotal
+                    grossTotal: gross
                   }
-                  consumption {
-                    quantity
-                  }
-                  usageCost {
-                    grossTotal
-                  }
-                  supplyCharge {
-                    grossTotal
+                  ... on Charge {
+                    consumption {
+                      quantity
+                    }
+                    usageCost {
+                      grossTotal
+                    }
+                    supplyCharge {
+                      grossTotal
+                    }
                   }
                 }
               }

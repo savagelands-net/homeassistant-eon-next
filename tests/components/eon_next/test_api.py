@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -243,6 +244,30 @@ def _auth_error_payload() -> dict[str, Any]:
             }
         ]
     }
+
+
+def test_agreements_query_uses_charge_only_statement_fields_in_charge_fragment() -> None:
+    match = re.search(
+        r"transactions\(first: 50\)\s*\{\s*edges\s*\{\s*node\s*\{"
+        r"(?P<node>.*?)\n\s*}\s*\n\s*}\s*\n\s*}",
+        AGREEMENTS_QUERY,
+        re.DOTALL,
+    )
+
+    assert match is not None
+    node_block = match.group("node")
+    assert re.search(r"amounts\s*\{\s*(?:grossTotal:\s*)?gross\b", node_block)
+
+    charge_fragment_start = node_block.index("... on Charge {")
+    top_level_node_block = node_block[:charge_fragment_start]
+    charge_fragment = node_block[charge_fragment_start:]
+
+    assert "consumption {" not in top_level_node_block
+    assert "usageCost" not in top_level_node_block
+    assert "supplyCharge" not in top_level_node_block
+    assert "consumption {" in charge_fragment
+    assert "usageCost" in charge_fragment
+    assert "supplyCharge" in charge_fragment
 
 
 def test_build_tariff_snapshot_selects_current_and_next_windows() -> None:
