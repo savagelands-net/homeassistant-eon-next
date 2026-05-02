@@ -141,10 +141,8 @@ def _statement_transaction_charge(
         "amounts": {"grossTotal": gross_total},
         "consumption": {
             "quantity": quantity,
-            "usageCost": {"grossTotal": usage_cost} if usage_cost is not None else None,
-            "supplyCharge": {"grossTotal": supply_charge}
-            if supply_charge is not None
-            else None,
+            "usageCost": usage_cost,
+            "supplyCharge": supply_charge,
         }
         if quantity is not None
         else None,
@@ -251,15 +249,9 @@ def _auth_error_payload() -> dict[str, Any]:
 
 
 def test_agreements_query_uses_charge_only_statement_fields_in_charge_fragment() -> None:
-    match = re.search(
-        r"transactions\(first: 50\)\s*\{\s*edges\s*\{\s*node\s*\{"
-        r"(?P<node>.*?)\n\s*}\s*\n\s*}\s*\n\s*}",
-        AGREEMENTS_QUERY,
-        re.DOTALL,
-    )
-
-    assert match is not None
-    node_block = match.group("node")
+    node_block = AGREEMENTS_QUERY.split("transactions(first: 50) {", 1)[1].split(
+        "electricityAgreements {", 1
+    )[0]
     assert re.search(r"amounts\s*\{\s*(?:grossTotal:\s*)?gross\b", node_block)
 
     charge_fragment_start = node_block.index("... on Charge {")
@@ -269,10 +261,54 @@ def test_agreements_query_uses_charge_only_statement_fields_in_charge_fragment()
     assert "consumption {" not in top_level_node_block
     assert "usageCost" not in top_level_node_block
     assert "supplyCharge" not in top_level_node_block
-    assert "consumption {" in charge_fragment
-    consumption_block = charge_fragment.split("consumption {", 1)[1]
-    assert "usageCost" in consumption_block
-    assert "supplyCharge" in consumption_block
+    assert re.search(r"amounts\s*\{\s*grossTotal:\s*gross\s*\}", node_block)
+    charge_fragment_pattern = (
+        r"\.\.\. on Charge \{\s*consumption \{\s*quantity"
+        r"\s*usageCost:\s*gross\s*supplyCharge:\s*gross\s*\}\s*\}"
+    )
+    assert re.search(
+        charge_fragment_pattern,
+        charge_fragment,
+        re.DOTALL,
+    )
+    assert re.search(r"\n\s*usageCost\s*:", top_level_node_block) is None
+    assert re.search(r"\n\s*supplyCharge\s*:", top_level_node_block) is None
+
+
+def test_build_account_snapshot_parses_live_shaped_statement_transactions() -> None:
+    agreement = _agreement_payload_with_meter_readings()
+    account = _account_payload(
+        balance=31061,
+        bills=_bills_payload(
+            _statement_bill_node(
+                _statement_transaction_payment(
+                    title="Direct debit",
+                    posted_date="2026-04-01",
+                    gross_total=40005,
+                ),
+                _statement_transaction_charge(
+                    title="Electricity",
+                    posted_date="2026-03-28",
+                    gross_total=14920,
+                    quantity="969.9660",
+                    usage_cost=13840,
+                    supply_charge=1080,
+                ),
+            )
+        ),
+    )
+
+    snapshot = build_account_snapshot(
+        account,
+        agreement,
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.latest_direct_debit_amount_gbp == 400.05
+    assert snapshot.latest_electricity_statement_total_gbp == 149.2
+    assert snapshot.latest_electricity_statement_quantity_kwh == 969.966
+    assert snapshot.latest_electricity_statement_usage_cost_gbp == 138.4
+    assert snapshot.latest_electricity_statement_standing_charge_gbp == 10.8
 
 
 def test_build_tariff_snapshot_selects_current_and_next_windows() -> None:

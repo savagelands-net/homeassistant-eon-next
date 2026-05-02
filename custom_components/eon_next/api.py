@@ -583,23 +583,15 @@ def _statement_transaction_fields(statement: dict | None) -> dict[str, Any]:
                 has_electricity_quantity = True
 
             usage_cost = consumption.get("usageCost") if isinstance(consumption, dict) else None
-            usage_cost_total = (
-                usage_cost.get("grossTotal") if isinstance(usage_cost, dict) else None
-            )
-            if isinstance(usage_cost_total, int):
-                electricity_usage_cost += usage_cost_total
+            if isinstance(usage_cost, int):
+                electricity_usage_cost += usage_cost
                 has_electricity_usage_cost = True
 
             supply_charge = (
                 consumption.get("supplyCharge") if isinstance(consumption, dict) else None
             )
-            supply_charge_total = (
-                supply_charge.get("grossTotal")
-                if isinstance(supply_charge, dict)
-                else None
-            )
-            if isinstance(supply_charge_total, int):
-                electricity_standing_charge += supply_charge_total
+            if isinstance(supply_charge, int):
+                electricity_standing_charge += supply_charge
                 has_electricity_standing_charge = True
             continue
 
