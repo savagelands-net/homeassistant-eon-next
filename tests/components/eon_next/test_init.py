@@ -327,8 +327,8 @@ async def test_async_setup_entry_migrates_old_electricity_unique_ids_and_entity_
 ) -> None:
     registry = integration_stubs
     registry.entries = {
-        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
-        "entry-123_next_import_rate": "sensor.eon_next_import_rate",
+        "entry-123_current_import_rate": "sensor.e_on_current_import_rate",
+        "entry-123_next_import_rate": "sensor.e_on_next_import_rate",
     }
 
     class _Client:
@@ -362,19 +362,19 @@ async def test_async_setup_entry_migrates_old_electricity_unique_ids_and_entity_
     assert result is True
     assert registry.update_calls == [
         (
-            "sensor.eon_current_import_rate",
+            "sensor.e_on_current_import_rate",
             "entry-123_electricity_current_import_rate",
-            "sensor.eon_electricity_current_import_rate",
+            "sensor.e_on_electricity_current_import_rate",
         ),
         (
-            "sensor.eon_next_import_rate",
+            "sensor.e_on_next_import_rate",
             "entry-123_electricity_next_import_rate",
-            "sensor.eon_electricity_next_import_rate",
+            "sensor.e_on_electricity_next_import_rate",
         ),
     ]
     assert registry.entries == {
-        "entry-123_electricity_current_import_rate": "sensor.eon_electricity_current_import_rate",
-        "entry-123_electricity_next_import_rate": "sensor.eon_electricity_next_import_rate",
+        "entry-123_electricity_current_import_rate": "sensor.e_on_electricity_current_import_rate",
+        "entry-123_electricity_next_import_rate": "sensor.e_on_electricity_next_import_rate",
     }
 
 
@@ -474,8 +474,8 @@ async def test_async_setup_entry_skips_when_new_electricity_unique_id_already_ex
 ) -> None:
     registry = integration_stubs
     registry.entries = {
-        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
-        "entry-123_electricity_current_import_rate": "sensor.eon_electricity_current_import_rate",
+        "entry-123_current_import_rate": "sensor.e_on_current_import_rate",
+        "entry-123_electricity_current_import_rate": "sensor.e_on_electricity_current_import_rate",
     }
 
     class _Client:
@@ -509,8 +509,8 @@ async def test_async_setup_entry_skips_when_new_electricity_unique_id_already_ex
     assert result is True
     assert registry.update_calls == []
     assert registry.entries == {
-        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
-        "entry-123_electricity_current_import_rate": "sensor.eon_electricity_current_import_rate",
+        "entry-123_current_import_rate": "sensor.e_on_current_import_rate",
+        "entry-123_electricity_current_import_rate": "sensor.e_on_electricity_current_import_rate",
     }
 
 
@@ -520,8 +520,8 @@ async def test_async_setup_entry_skips_when_new_electricity_entity_id_already_ex
 ) -> None:
     registry = integration_stubs
     registry.entries = {
-        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
-        "some_other_unique_id": "sensor.eon_electricity_current_import_rate",
+        "entry-123_current_import_rate": "sensor.e_on_current_import_rate",
+        "some_other_unique_id": "sensor.e_on_electricity_current_import_rate",
     }
 
     class _Client:
@@ -555,8 +555,8 @@ async def test_async_setup_entry_skips_when_new_electricity_entity_id_already_ex
     assert result is True
     assert registry.update_calls == []
     assert registry.entries == {
-        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
-        "some_other_unique_id": "sensor.eon_electricity_current_import_rate",
+        "entry-123_current_import_rate": "sensor.e_on_current_import_rate",
+        "some_other_unique_id": "sensor.e_on_electricity_current_import_rate",
     }
 
 

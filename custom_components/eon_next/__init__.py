@@ -18,39 +18,39 @@ except ModuleNotFoundError:  # Allows importing submodules in isolated unit test
 
 ELECTRICITY_ENTITY_MIGRATIONS = {
     "current_import_rate": (
-        "sensor.eon_current_import_rate",
+        "sensor.e_on_current_import_rate",
         "electricity_current_import_rate",
-        "sensor.eon_electricity_current_import_rate",
+        "sensor.e_on_electricity_current_import_rate",
     ),
     "next_import_rate": (
-        "sensor.eon_next_import_rate",
+        "sensor.e_on_next_import_rate",
         "electricity_next_import_rate",
-        "sensor.eon_electricity_next_import_rate",
+        "sensor.e_on_electricity_next_import_rate",
     ),
     "next_rate_change_at": (
-        "sensor.eon_next_rate_change",
+        "sensor.e_on_next_rate_change",
         "electricity_next_rate_change_at",
-        "sensor.eon_electricity_next_rate_change",
+        "sensor.e_on_electricity_next_rate_change",
     ),
     "standing_charge": (
-        "sensor.eon_standing_charge",
+        "sensor.e_on_standing_charge",
         "electricity_standing_charge",
-        "sensor.eon_electricity_standing_charge",
+        "sensor.e_on_electricity_standing_charge",
     ),
     "standing_charge_ex_vat": (
-        "sensor.eon_standing_charge_ex_vat",
+        "sensor.e_on_standing_charge_ex_vat",
         "electricity_standing_charge_ex_vat",
-        "sensor.eon_electricity_standing_charge_ex_vat",
+        "sensor.e_on_electricity_standing_charge_ex_vat",
     ),
     "latest_meter_reading": (
-        "sensor.eon_latest_meter_reading",
+        "sensor.e_on_latest_meter_reading",
         "latest_electricity_meter_reading",
-        "sensor.eon_latest_electricity_meter_reading",
+        "sensor.e_on_latest_electricity_meter_reading",
     ),
     "latest_meter_reading_at": (
-        "sensor.eon_latest_meter_reading_time",
+        "sensor.e_on_latest_meter_reading_time",
         "latest_electricity_meter_reading_at",
-        "sensor.eon_latest_electricity_meter_reading_time",
+        "sensor.e_on_latest_electricity_meter_reading_time",
     ),
 }
 
