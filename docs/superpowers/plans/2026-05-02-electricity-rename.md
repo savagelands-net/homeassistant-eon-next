@@ -336,7 +336,7 @@ async def test_async_setup_entry_migrates_old_electricity_unique_ids(init_module
     entry = init_module.ConfigEntry(
         entry_id="entry-123",
         data={
-            "username": "example@example.invalid",
+            "username": "placeholder_email",
             "password": "secret",
             "account_number": "A-TEST0001",
         },
