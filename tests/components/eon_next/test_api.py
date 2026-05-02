@@ -135,14 +135,18 @@ def _statement_transaction_charge(
     supply_charge: int | None = None,
 ) -> dict[str, Any]:
     return {
-        "__typename": "ChargeType",
+        "__typename": "Charge",
         "title": title,
         "postedDate": posted_date,
         "amounts": {"grossTotal": gross_total},
-        "consumption": {"quantity": quantity} if quantity is not None else None,
-        "usageCost": {"grossTotal": usage_cost} if usage_cost is not None else None,
-        "supplyCharge": {"grossTotal": supply_charge}
-        if supply_charge is not None
+        "consumption": {
+            "quantity": quantity,
+            "usageCost": {"grossTotal": usage_cost} if usage_cost is not None else None,
+            "supplyCharge": {"grossTotal": supply_charge}
+            if supply_charge is not None
+            else None,
+        }
+        if quantity is not None
         else None,
     }
 
@@ -153,7 +157,7 @@ def _statement_transaction_payment(
     gross_total: int,
 ) -> dict[str, Any]:
     return {
-        "__typename": "PaymentType",
+        "__typename": "Payment",
         "title": title,
         "postedDate": posted_date,
         "amounts": {"grossTotal": gross_total},
@@ -266,8 +270,9 @@ def test_agreements_query_uses_charge_only_statement_fields_in_charge_fragment()
     assert "usageCost" not in top_level_node_block
     assert "supplyCharge" not in top_level_node_block
     assert "consumption {" in charge_fragment
-    assert "usageCost" in charge_fragment
-    assert "supplyCharge" in charge_fragment
+    consumption_block = charge_fragment.split("consumption {", 1)[1]
+    assert "usageCost" in consumption_block
+    assert "supplyCharge" in consumption_block
 
 
 def test_build_tariff_snapshot_selects_current_and_next_windows() -> None:

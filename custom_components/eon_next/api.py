@@ -81,12 +81,8 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
                   ... on Charge {
                     consumption {
                       quantity
-                    }
-                    usageCost {
-                      grossTotal
-                    }
-                    supplyCharge {
-                      grossTotal
+                      usageCost: gross
+                      supplyCharge: gross
                     }
                   }
                 }
@@ -563,7 +559,7 @@ def _statement_transaction_fields(statement: dict | None) -> dict[str, Any]:
         if not isinstance(gross_total, int):
             gross_total = None
 
-        if node.get("__typename") == "PaymentType" and title == "Direct debit":
+        if node.get("__typename") == "Payment" and title == "Direct debit":
             if posted_date is None or gross_total is None:
                 continue
             if latest_direct_debit_at is None or posted_date > latest_direct_debit_at:
@@ -571,7 +567,7 @@ def _statement_transaction_fields(statement: dict | None) -> dict[str, Any]:
                 latest_direct_debit_amount = _optional_minor_units_to_gbp(gross_total)
             continue
 
-        if node.get("__typename") != "ChargeType" or gross_total is None:
+        if node.get("__typename") != "Charge" or gross_total is None:
             continue
 
         consumption = node.get("consumption")
@@ -586,7 +582,7 @@ def _statement_transaction_fields(statement: dict | None) -> dict[str, Any]:
                 electricity_quantity += quantity
                 has_electricity_quantity = True
 
-            usage_cost = node.get("usageCost")
+            usage_cost = consumption.get("usageCost") if isinstance(consumption, dict) else None
             usage_cost_total = (
                 usage_cost.get("grossTotal") if isinstance(usage_cost, dict) else None
             )
@@ -594,7 +590,9 @@ def _statement_transaction_fields(statement: dict | None) -> dict[str, Any]:
                 electricity_usage_cost += usage_cost_total
                 has_electricity_usage_cost = True
 
-            supply_charge = node.get("supplyCharge")
+            supply_charge = (
+                consumption.get("supplyCharge") if isinstance(consumption, dict) else None
+            )
             supply_charge_total = (
                 supply_charge.get("grossTotal")
                 if isinstance(supply_charge, dict)
