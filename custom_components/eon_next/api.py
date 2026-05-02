@@ -81,8 +81,8 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
                   ... on Charge {
                     consumption {
                       quantity
-                      usageCost: gross
-                      supplyCharge: gross
+                      usageCost
+                      supplyCharge
                     }
                   }
                 }

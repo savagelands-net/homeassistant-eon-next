@@ -264,7 +264,7 @@ def test_agreements_query_uses_charge_only_statement_fields_in_charge_fragment()
     assert re.search(r"amounts\s*\{\s*grossTotal:\s*gross\s*\}", node_block)
     charge_fragment_pattern = (
         r"\.\.\. on Charge \{\s*consumption \{\s*quantity"
-        r"\s*usageCost:\s*gross\s*supplyCharge:\s*gross\s*\}\s*\}"
+        r"\s*usageCost\s*\s*supplyCharge\s*\}\s*\}"
     )
     assert re.search(
         charge_fragment_pattern,
