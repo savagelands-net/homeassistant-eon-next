@@ -6,11 +6,11 @@ Home Assistant custom integration for E.ON Next.
 
 ## Current features
 
-- Live VAT-inclusive import rate
-- Next import rate when E.ON publishes a later tariff window
-- Next rate change timestamp when available
-- Standing charge sensors including pre-VAT standing charge
-- Active tariff and account metadata, including account number and agreement window attributes
+- Live VAT-inclusive electricity import rate
+- Next electricity import rate when E.ON publishes a later tariff window
+- Next electricity rate change timestamp when available
+- Electricity standing charge sensors including pre-VAT standing charge
+- Active electricity tariff and account metadata, including account number and agreement window attributes
 - Latest electricity meter reading and reading timestamp when available
 - Current account balance and latest statement amounts when available
 - Gas unit rate, standing charge, tariff metadata, and latest gas meter reading when available

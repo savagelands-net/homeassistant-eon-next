@@ -213,24 +213,26 @@ async def test_async_setup_entry_uses_stored_coordinator(sensor_module, snapshot
     assert added_entities[0].coordinator is coordinator
 
 
-def test_current_rate_sensor_exposes_value_unit_and_attributes(sensor_module, snapshot) -> None:
+def test_electricity_current_rate_sensor_exposes_value_unit_and_attributes(
+    sensor_module, snapshot
+) -> None:
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
-    current_sensor = entities[0]
+    current_sensor = _entity_by_suffix(entities, "electricity_current_import_rate")
 
-    assert current_sensor.name == "E.ON Current Import Rate"
-    assert current_sensor.unique_id == "entry-123_current_import_rate"
+    assert current_sensor.name == "E.ON Electricity Current Import Rate"
+    assert current_sensor.unique_id == "entry-123_electricity_current_import_rate"
     assert current_sensor.native_value == 0.239022
     assert current_sensor.native_unit_of_measurement == "GBP/kWh"
     assert current_sensor.extra_state_attributes == {
         "account_number": "A-TEST0001",
-        "tariff_name": "Next Drive Smart V5.2",
-        "tariff_code": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
-        "standing_charge_gbp_per_day": 0.6000015,
-        "pre_vat_standing_charge_gbp_per_day": 0.57143,
-        "current_window_end": datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
-        "next_window_start": datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
-        "agreement_valid_from": datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
-        "agreement_valid_to": None,
+        "electricity_tariff_name": "Next Drive Smart V5.2",
+        "electricity_tariff_code": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+        "electricity_standing_charge_gbp_per_day": 0.6000015,
+        "electricity_pre_vat_standing_charge_gbp_per_day": 0.57143,
+        "electricity_current_window_end": datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        "electricity_next_window_start": datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        "electricity_agreement_valid_from": datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        "electricity_agreement_valid_to": None,
     }
 
 
@@ -252,41 +254,82 @@ def test_standing_charge_and_account_number_sensors_expose_expected_values(
 
 def test_next_rate_change_sensor_exposes_expected_datetime(sensor_module, snapshot) -> None:
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
-    next_change_sensor = entities[2]
+    next_change_sensor = _entity_by_suffix(entities, "electricity_next_rate_change_at")
 
-    assert next_change_sensor.name == "E.ON Next Rate Change"
-    assert next_change_sensor.unique_id == "entry-123_next_rate_change_at"
+    assert next_change_sensor.name == "E.ON Electricity Next Rate Change"
+    assert next_change_sensor.unique_id == "entry-123_electricity_next_rate_change_at"
     assert next_change_sensor.native_value == datetime(2026, 5, 1, 12, 30, tzinfo=UTC)
 
 
-def test_latest_meter_reading_sensor_exposes_value_unit_and_attributes(
+def test_electricity_standing_charge_and_meter_sensors_use_explicit_names(
     sensor_module, snapshot
 ) -> None:
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
-    reading_sensor = _entity_by_suffix(entities, "latest_meter_reading")
+    next_import_rate_sensor = _entity_by_suffix(entities, "electricity_next_import_rate")
+    next_rate_change_sensor = _entity_by_suffix(entities, "electricity_next_rate_change_at")
+    standing_charge_sensor = _entity_by_suffix(entities, "electricity_standing_charge")
+    standing_charge_ex_vat_sensor = _entity_by_suffix(
+        entities, "electricity_standing_charge_ex_vat"
+    )
+    latest_meter_reading_sensor = _entity_by_suffix(
+        entities, "latest_electricity_meter_reading"
+    )
+    latest_meter_reading_at_sensor = _entity_by_suffix(
+        entities, "latest_electricity_meter_reading_at"
+    )
 
-    assert reading_sensor.name == "E.ON Latest Meter Reading"
-    assert reading_sensor.native_value == 12346.0
-    assert reading_sensor.native_unit_of_measurement == "kWh"
-    assert reading_sensor.extra_state_attributes == {
-        "meter_point_mpan": "0012345678901",
-        "latest_meter_reading_source": "SMART",
-        "latest_meter_reading_type": "actual",
-        "latest_meter_reading_register_identifier": "00001",
-        "latest_meter_reading_register_name": "IMP",
-        "latest_meter_reading_register_digits": 5,
-        "latest_meter_reading_register_is_quarantined": False,
+    assert next_import_rate_sensor.name == "E.ON Electricity Next Import Rate"
+    assert next_rate_change_sensor.name == "E.ON Electricity Next Rate Change"
+    assert standing_charge_sensor.name == "E.ON Electricity Standing Charge"
+    assert standing_charge_ex_vat_sensor.name == "E.ON Electricity Standing Charge Ex VAT"
+    assert latest_meter_reading_sensor.name == "E.ON Latest Electricity Meter Reading"
+    assert latest_meter_reading_at_sensor.name == "E.ON Latest Electricity Meter Reading Time"
+
+    assert standing_charge_sensor.native_value == 0.6000015
+    assert standing_charge_sensor.native_unit_of_measurement == "GBP/day"
+    assert standing_charge_ex_vat_sensor.native_value == 0.57143
+    assert standing_charge_ex_vat_sensor.native_unit_of_measurement == "GBP/day"
+    assert latest_meter_reading_sensor.native_value == 12346.0
+    assert latest_meter_reading_sensor.native_unit_of_measurement == "kWh"
+    assert latest_meter_reading_sensor.extra_state_attributes == {
+        "electricity_meter_point_mpan": "0012345678901",
+        "latest_electricity_meter_reading_source": "SMART",
+        "latest_electricity_meter_reading_type": "actual",
+        "latest_electricity_meter_reading_register_identifier": "00001",
+        "latest_electricity_meter_reading_register_name": "IMP",
+        "latest_electricity_meter_reading_register_digits": 5,
+        "latest_electricity_meter_reading_register_is_quarantined": False,
     }
+    assert latest_meter_reading_at_sensor.native_value == datetime(
+        2026, 5, 2, 11, 0, tzinfo=UTC
+    )
 
 
-def test_latest_meter_reading_timestamp_sensor_exposes_expected_datetime(
-    sensor_module, snapshot
-) -> None:
+def test_gas_and_billing_sensor_names_remain_unchanged(sensor_module, snapshot) -> None:
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
-    timestamp_sensor = _entity_by_suffix(entities, "latest_meter_reading_at")
 
-    assert timestamp_sensor.name == "E.ON Latest Meter Reading Time"
-    assert timestamp_sensor.native_value == datetime(2026, 5, 2, 11, 0, tzinfo=UTC)
+    assert _entity_by_suffix(entities, "current_account_balance").name == (
+        "E.ON Current Account Balance"
+    )
+    assert _entity_by_suffix(entities, "latest_statement_closing_balance").name == (
+        "E.ON Latest Statement Closing Balance"
+    )
+    assert _entity_by_suffix(entities, "latest_statement_charges").name == (
+        "E.ON Latest Statement Charges"
+    )
+    assert _entity_by_suffix(entities, "gas_unit_rate").name == "E.ON Gas Unit Rate"
+    assert _entity_by_suffix(entities, "gas_standing_charge").name == (
+        "E.ON Gas Standing Charge"
+    )
+    assert _entity_by_suffix(entities, "gas_standing_charge_ex_vat").name == (
+        "E.ON Gas Standing Charge Ex VAT"
+    )
+    assert _entity_by_suffix(entities, "latest_gas_meter_reading").name == (
+        "E.ON Latest Gas Meter Reading"
+    )
+    assert _entity_by_suffix(entities, "latest_gas_meter_reading_at").name == (
+        "E.ON Latest Gas Meter Reading Time"
+    )
 
 
 def test_billing_sensors_expose_expected_values(sensor_module, snapshot) -> None:

@@ -13,7 +13,7 @@ from custom_components.eon_next.const import DOMAIN, PLATFORMS
 
 
 @pytest.fixture
-def integration_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+def integration_stubs(monkeypatch: pytest.MonkeyPatch):
     for name in list(sys.modules):
         if name.startswith("homeassistant"):
             monkeypatch.delitem(sys.modules, name, raising=False)
@@ -27,6 +27,37 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     aiohttp_client = types.ModuleType("homeassistant.helpers.aiohttp_client")
     aiohttp_client.async_get_clientsession = lambda hass: hass.client_session
     helpers.aiohttp_client = aiohttp_client
+
+    entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
+
+    @dataclass
+    class _RegistryEntry:
+        unique_id: str
+
+    class _EntityRegistry:
+        def __init__(self) -> None:
+            self.entries: dict[str, str] = {}
+            self.update_calls: list[tuple[str, str]] = []
+
+        def async_get_entity_id(
+            self, platform: str, domain: str, unique_id: str
+        ) -> str | None:
+            return self.entries.get(unique_id)
+
+        def async_update_entity(self, entity_id: str, *, new_unique_id: str) -> None:
+            old_unique_id = next(
+                unique_id
+                for unique_id, existing_entity_id in self.entries.items()
+                if existing_entity_id == entity_id
+            )
+            self.update_calls.append((old_unique_id, new_unique_id))
+            self.entries.pop(old_unique_id)
+            self.entries[new_unique_id] = entity_id
+
+    registry = _EntityRegistry()
+    entity_registry.RegistryEntry = _RegistryEntry
+    entity_registry.async_get = lambda hass: registry
+    helpers.entity_registry = entity_registry
 
     exceptions = types.ModuleType("homeassistant.exceptions")
 
@@ -146,6 +177,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         "homeassistant": homeassistant,
         "homeassistant.helpers": helpers,
         "homeassistant.helpers.aiohttp_client": aiohttp_client,
+        "homeassistant.helpers.entity_registry": entity_registry,
         "homeassistant.exceptions": exceptions,
         "homeassistant.core": core,
         "homeassistant.data_entry_flow": data_entry_flow,
@@ -155,6 +187,8 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
+
+    return registry
 
 
 class _AbortFlow(Exception):
@@ -276,6 +310,57 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
     assert isinstance(stored["client"], _Client)
     assert stored["coordinator"].first_refreshes == 1
     assert hass.forward_calls == [(entry, PLATFORMS)]
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_migrates_old_electricity_unique_ids(
+    init_module, integration_stubs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = integration_stubs
+    registry.entries = {
+        "entry-123_current_import_rate": "sensor.current_import_rate",
+        "entry-123_next_import_rate": "sensor.next_import_rate",
+    }
+
+    class _Client:
+        def __init__(
+            self, session, *, email: str, password: str, account_number: str
+        ) -> None:
+            return None
+
+    class _Coordinator:
+        def __init__(self, hass, client) -> None:
+            return None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            return None
+
+    monkeypatch.setattr(init_module, "EonNextRatesClient", _Client)
+    monkeypatch.setattr(init_module, "EonNextRatesCoordinator", _Coordinator)
+
+    hass = init_module.HomeAssistant()
+    entry = init_module.ConfigEntry(
+        entry_id="entry-123",
+        data={
+            "username": "user@example.com",
+            "password": "secret",
+            "account_number": "A-TEST0001",
+        },
+    )
+
+    result = await init_module.async_setup_entry(hass, entry)
+
+    assert result is True
+    assert registry.update_calls == [
+        (
+            "entry-123_current_import_rate",
+            "entry-123_electricity_current_import_rate",
+        ),
+        (
+            "entry-123_next_import_rate",
+            "entry-123_electricity_next_import_rate",
+        ),
+    ]
 
 
 @pytest.mark.asyncio
