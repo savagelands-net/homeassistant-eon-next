@@ -69,28 +69,44 @@ async def _async_migrate_electricity_unique_ids(
         old_unique_id = f"{entry.entry_id}_{old_suffix}"
         new_unique_id = f"{entry.entry_id}_{new_suffix}"
         old_entity_id = registry.async_get_entity_id("sensor", DOMAIN, old_unique_id)
-        if old_entity_id is None:
-            continue
 
-        if registry.async_get_entity_id("sensor", DOMAIN, new_unique_id) is not None:
-            continue
+        if old_entity_id is not None:
+            current_entity_id = old_entity_id
+            current_unique_id = old_unique_id
+            if registry.async_get_entity_id("sensor", DOMAIN, new_unique_id) is not None:
+                continue
+        else:
+            current_entity_id = registry.async_get_entity_id("sensor", DOMAIN, new_unique_id)
+            current_unique_id = new_unique_id
+            if current_entity_id is None:
+                continue
 
         target_entity_id = (
             new_canonical_entity_id
-            if old_entity_id == old_canonical_entity_id
-            else old_entity_id
+            if current_entity_id == old_canonical_entity_id
+            else current_entity_id
         )
 
         if (
-            target_entity_id != old_entity_id
+            target_entity_id != current_entity_id
             and registry.async_is_registered(target_entity_id)
         ):
             continue
 
+        if current_unique_id == old_unique_id:
+            registry.async_update_entity(
+                current_entity_id,
+                new_entity_id=target_entity_id,
+                new_unique_id=new_unique_id,
+            )
+            continue
+
+        if target_entity_id == current_entity_id:
+            continue
+
         registry.async_update_entity(
-            old_entity_id,
+            current_entity_id,
             new_entity_id=target_entity_id,
-            new_unique_id=new_unique_id,
         )
 
 
