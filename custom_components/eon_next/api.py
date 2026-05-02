@@ -46,16 +46,49 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
   account(accountNumber: $accountNumber) {
     number
     balance
-    bills(last: 5, orderBy: ISSUED_DATE_DESC) {
+    bills(first: 1, orderBy: ISSUED_DATE_DESC) {
       edges {
         node {
           __typename
           billType
           issuedDate
           ... on StatementType {
+            fromDate
+            toDate
+            openingBalance
             closingBalance
+            paymentDueDate
+            status
             totalCharges {
+              netTotal
+              taxTotal
               grossTotal
+            }
+            totalCredits {
+              netTotal
+              taxTotal
+              grossTotal
+            }
+            transactions(first: 50) {
+              edges {
+                node {
+                  __typename
+                  title
+                  postedDate
+                  amounts {
+                    grossTotal
+                  }
+                  consumption {
+                    quantity
+                  }
+                  usageCost {
+                    grossTotal
+                  }
+                  supplyCharge {
+                    grossTotal
+                  }
+                }
+              }
             }
           }
         }
@@ -153,8 +186,22 @@ class AccountSnapshot:
     latest_meter_reading_register_is_quarantined: bool | None = None
     meter_point_mpan: str | None = None
     current_account_balance_gbp: float | None = None
+    latest_statement_issued_at: datetime | None = None
+    latest_statement_period_start: datetime | None = None
+    latest_statement_period_end: datetime | None = None
+    latest_statement_payment_due_at: datetime | None = None
+    latest_statement_opening_balance_gbp: float | None = None
     latest_statement_closing_balance_gbp: float | None = None
     latest_statement_charges_gbp: float | None = None
+    latest_statement_credits_gbp: float | None = None
+    latest_direct_debit_amount_gbp: float | None = None
+    latest_direct_debit_at: datetime | None = None
+    latest_electricity_statement_total_gbp: float | None = None
+    latest_electricity_statement_quantity_kwh: float | None = None
+    latest_electricity_statement_usage_cost_gbp: float | None = None
+    latest_electricity_statement_standing_charge_gbp: float | None = None
+    latest_gas_statement_total_gbp: float | None = None
+    latest_gas_statement_quantity_kwh: float | None = None
     gas_rate_gbp_per_kwh: float | None = None
     gas_pre_vat_rate_gbp_per_kwh: float | None = None
     gas_tariff_name: str | None = None
@@ -442,6 +489,153 @@ def _optional_minor_units_to_gbp(value: int | None) -> float | None:
     return value / 100
 
 
+def _parse_date_to_datetime(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=UTC)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_decimal_string(value: str | None) -> float | None:
+    if value is None:
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _statement_transaction_fields(statement: dict | None) -> dict[str, Any]:
+    empty_fields = {
+        "latest_direct_debit_amount_gbp": None,
+        "latest_direct_debit_at": None,
+        "latest_electricity_statement_total_gbp": None,
+        "latest_electricity_statement_quantity_kwh": None,
+        "latest_electricity_statement_usage_cost_gbp": None,
+        "latest_electricity_statement_standing_charge_gbp": None,
+        "latest_gas_statement_total_gbp": None,
+        "latest_gas_statement_quantity_kwh": None,
+    }
+    if not isinstance(statement, dict):
+        return empty_fields
+
+    transactions = statement.get("transactions")
+    if not isinstance(transactions, dict):
+        return empty_fields
+
+    edges = transactions.get("edges")
+    if not isinstance(edges, list):
+        return empty_fields
+
+    electricity_total = 0
+    electricity_quantity = 0.0
+    electricity_usage_cost = 0
+    electricity_standing_charge = 0
+    has_electricity = False
+    has_electricity_quantity = False
+    has_electricity_usage_cost = False
+    has_electricity_standing_charge = False
+    gas_total = 0
+    gas_quantity = 0.0
+    has_gas = False
+    has_gas_quantity = False
+    latest_direct_debit_amount = None
+    latest_direct_debit_at = None
+
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+
+        node = edge.get("node")
+        if not isinstance(node, dict):
+            continue
+
+        title = node.get("title")
+        posted_date = _parse_date_to_datetime(node.get("postedDate"))
+        amounts = node.get("amounts")
+        gross_total = amounts.get("grossTotal") if isinstance(amounts, dict) else None
+        if not isinstance(gross_total, int):
+            gross_total = None
+
+        if node.get("__typename") == "PaymentType" and title == "Direct debit":
+            if posted_date is None or gross_total is None:
+                continue
+            if latest_direct_debit_at is None or posted_date > latest_direct_debit_at:
+                latest_direct_debit_at = posted_date
+                latest_direct_debit_amount = _optional_minor_units_to_gbp(gross_total)
+            continue
+
+        if node.get("__typename") != "ChargeType" or gross_total is None:
+            continue
+
+        consumption = node.get("consumption")
+        quantity = None
+        if isinstance(consumption, dict):
+            quantity = _parse_decimal_string(consumption.get("quantity"))
+
+        if title == "Electricity":
+            electricity_total += gross_total
+            has_electricity = True
+            if quantity is not None:
+                electricity_quantity += quantity
+                has_electricity_quantity = True
+
+            usage_cost = node.get("usageCost")
+            usage_cost_total = (
+                usage_cost.get("grossTotal") if isinstance(usage_cost, dict) else None
+            )
+            if isinstance(usage_cost_total, int):
+                electricity_usage_cost += usage_cost_total
+                has_electricity_usage_cost = True
+
+            supply_charge = node.get("supplyCharge")
+            supply_charge_total = (
+                supply_charge.get("grossTotal")
+                if isinstance(supply_charge, dict)
+                else None
+            )
+            if isinstance(supply_charge_total, int):
+                electricity_standing_charge += supply_charge_total
+                has_electricity_standing_charge = True
+            continue
+
+        if title == "Gas":
+            gas_total += gross_total
+            has_gas = True
+            if quantity is not None:
+                gas_quantity += quantity
+                has_gas_quantity = True
+
+    return {
+        "latest_direct_debit_amount_gbp": latest_direct_debit_amount,
+        "latest_direct_debit_at": latest_direct_debit_at,
+        "latest_electricity_statement_total_gbp": (
+            _optional_minor_units_to_gbp(electricity_total) if has_electricity else None
+        ),
+        "latest_electricity_statement_quantity_kwh": (
+            electricity_quantity if has_electricity_quantity else None
+        ),
+        "latest_electricity_statement_usage_cost_gbp": (
+            _optional_minor_units_to_gbp(electricity_usage_cost)
+            if has_electricity_usage_cost
+            else None
+        ),
+        "latest_electricity_statement_standing_charge_gbp": (
+            _optional_minor_units_to_gbp(electricity_standing_charge)
+            if has_electricity_standing_charge
+            else None
+        ),
+        "latest_gas_statement_total_gbp": (
+            _optional_minor_units_to_gbp(gas_total) if has_gas else None
+        ),
+        "latest_gas_statement_quantity_kwh": gas_quantity if has_gas_quantity else None,
+    }
+
+
 def _parse_meter_reading_value(value: str | None) -> float | None:
     if value is None:
         return None
@@ -467,8 +661,7 @@ def _empty_meter_reading_fields(mpan: str | None) -> dict[str, Any]:
 
 
 def _billing_fields(account: dict) -> dict[str, Any]:
-    statement_closing_balance = None
-    statement_charges = None
+    statement = None
     bills = account.get("bills")
 
     if isinstance(bills, dict):
@@ -485,22 +678,41 @@ def _billing_fields(account: dict) -> dict[str, Any]:
                 if latest_bill.get("__typename") != "StatementType":
                     continue
 
-                statement_closing_balance = _optional_minor_units_to_gbp(
-                    latest_bill.get("closingBalance")
-                )
-                total_charges = latest_bill.get("totalCharges")
-                if isinstance(total_charges, dict):
-                    statement_charges = _optional_minor_units_to_gbp(
-                        total_charges.get("grossTotal")
-                    )
+                statement = latest_bill
                 break
+
+    total_charges = statement.get("totalCharges") if isinstance(statement, dict) else None
+    total_credits = statement.get("totalCredits") if isinstance(statement, dict) else None
 
     return {
         "current_account_balance_gbp": _optional_minor_units_to_gbp(
             account.get("balance")
         ),
-        "latest_statement_closing_balance_gbp": statement_closing_balance,
-        "latest_statement_charges_gbp": statement_charges,
+        "latest_statement_issued_at": _parse_date_to_datetime(
+            statement.get("issuedDate") if isinstance(statement, dict) else None
+        ),
+        "latest_statement_period_start": _parse_date_to_datetime(
+            statement.get("fromDate") if isinstance(statement, dict) else None
+        ),
+        "latest_statement_period_end": _parse_date_to_datetime(
+            statement.get("toDate") if isinstance(statement, dict) else None
+        ),
+        "latest_statement_payment_due_at": _parse_date_to_datetime(
+            statement.get("paymentDueDate") if isinstance(statement, dict) else None
+        ),
+        "latest_statement_opening_balance_gbp": _optional_minor_units_to_gbp(
+            statement.get("openingBalance") if isinstance(statement, dict) else None
+        ),
+        "latest_statement_closing_balance_gbp": _optional_minor_units_to_gbp(
+            statement.get("closingBalance") if isinstance(statement, dict) else None
+        ),
+        "latest_statement_charges_gbp": _optional_minor_units_to_gbp(
+            total_charges.get("grossTotal") if isinstance(total_charges, dict) else None
+        ),
+        "latest_statement_credits_gbp": _optional_minor_units_to_gbp(
+            total_credits.get("grossTotal") if isinstance(total_credits, dict) else None
+        ),
+        **_statement_transaction_fields(statement),
     }
 
 

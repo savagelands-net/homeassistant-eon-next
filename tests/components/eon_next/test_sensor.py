@@ -164,8 +164,22 @@ def snapshot() -> AccountSnapshot:
         latest_meter_reading_register_is_quarantined=False,
         meter_point_mpan="0012345678901",
         current_account_balance_gbp=123.45,
+        latest_statement_issued_at=datetime(2026, 4, 20, 0, 0, tzinfo=UTC),
+        latest_statement_period_start=datetime(2026, 3, 21, 0, 0, tzinfo=UTC),
+        latest_statement_period_end=datetime(2026, 4, 19, 0, 0, tzinfo=UTC),
+        latest_statement_payment_due_at=datetime(2026, 5, 5, 0, 0, tzinfo=UTC),
+        latest_statement_opening_balance_gbp=370.23,
         latest_statement_closing_balance_gbp=98.76,
         latest_statement_charges_gbp=54.32,
+        latest_statement_credits_gbp=0,
+        latest_direct_debit_amount_gbp=400.05,
+        latest_direct_debit_at=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        latest_electricity_statement_total_gbp=290.51,
+        latest_electricity_statement_quantity_kwh=1571.748,
+        latest_electricity_statement_usage_cost_gbp=271.91,
+        latest_electricity_statement_standing_charge_gbp=18.6,
+        latest_gas_statement_total_gbp=169.16,
+        latest_gas_statement_quantity_kwh=2721.06,
         gas_rate_gbp_per_kwh=0.06543,
         gas_pre_vat_rate_gbp_per_kwh=0.06231,
         gas_tariff_name="Next Flex Gas",
@@ -209,7 +223,7 @@ async def test_async_setup_entry_uses_stored_coordinator(sensor_module, snapshot
         lambda entities: added_entities.extend(entities),
     )
 
-    assert len(added_entities) == 16
+    assert len(added_entities) == 30
     assert added_entities[0].coordinator is coordinator
 
 
@@ -352,6 +366,60 @@ def test_billing_sensors_expose_expected_values(sensor_module, snapshot) -> None
     assert statement_charges_sensor.native_unit_of_measurement == "GBP"
 
 
+def test_statement_date_sensors_expose_expected_timestamps(sensor_module, snapshot) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+
+    assert _entity_by_suffix(entities, "latest_statement_issued_at").native_value == datetime(
+        2026, 4, 20, 0, 0, tzinfo=UTC
+    )
+    assert _entity_by_suffix(entities, "latest_statement_period_start").native_value == datetime(
+        2026, 3, 21, 0, 0, tzinfo=UTC
+    )
+    assert _entity_by_suffix(entities, "latest_statement_period_end").native_value == datetime(
+        2026, 4, 19, 0, 0, tzinfo=UTC
+    )
+    assert _entity_by_suffix(entities, "latest_statement_payment_due_at").native_value == datetime(
+        2026, 5, 5, 0, 0, tzinfo=UTC
+    )
+    assert _entity_by_suffix(entities, "latest_direct_debit_at").native_value == datetime(
+        2026, 4, 1, 0, 0, tzinfo=UTC
+    )
+
+
+def test_statement_amount_sensors_expose_expected_values(sensor_module, snapshot) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+
+    assert _entity_by_suffix(entities, "latest_statement_opening_balance").native_value == 370.23
+    assert _entity_by_suffix(entities, "latest_statement_closing_balance").native_value == 98.76
+    assert _entity_by_suffix(entities, "latest_statement_charges").native_value == 54.32
+    assert _entity_by_suffix(entities, "latest_statement_credits").native_value == 0
+    assert _entity_by_suffix(entities, "latest_direct_debit_amount").native_value == 400.05
+
+
+def test_statement_fuel_breakdown_sensors_expose_expected_values(
+    sensor_module, snapshot
+) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+
+    assert (
+        _entity_by_suffix(entities, "latest_electricity_statement_total").native_value
+        == 290.51
+    )
+    assert (
+        _entity_by_suffix(entities, "latest_electricity_statement_quantity").native_value
+        == 1571.748
+    )
+    assert (
+        _entity_by_suffix(entities, "latest_electricity_statement_usage_cost").native_value
+        == 271.91
+    )
+    assert _entity_by_suffix(
+        entities, "latest_electricity_statement_standing_charge"
+    ).native_value == 18.6
+    assert _entity_by_suffix(entities, "latest_gas_statement_total").native_value == 169.16
+    assert _entity_by_suffix(entities, "latest_gas_statement_quantity").native_value == 2721.06
+
+
 def test_gas_rate_and_charge_sensors_expose_expected_values(
     sensor_module, snapshot
 ) -> None:
@@ -468,6 +536,59 @@ def test_optional_billing_and_gas_sensors_return_none_when_data_is_absent(
         "latest_gas_meter_reading_register_digits": None,
         "latest_gas_meter_reading_register_is_quarantined": None,
     }
+
+
+def test_optional_statement_breakdown_sensors_return_none_when_data_is_absent(
+    sensor_module, snapshot
+) -> None:
+    snapshot_without_statement_breakdown = replace(
+        snapshot,
+        latest_statement_issued_at=None,
+        latest_statement_period_start=None,
+        latest_statement_period_end=None,
+        latest_statement_payment_due_at=None,
+        latest_statement_opening_balance_gbp=None,
+        latest_statement_closing_balance_gbp=None,
+        latest_statement_charges_gbp=None,
+        latest_statement_credits_gbp=None,
+        latest_direct_debit_amount_gbp=None,
+        latest_direct_debit_at=None,
+        latest_electricity_statement_total_gbp=None,
+        latest_electricity_statement_quantity_kwh=None,
+        latest_electricity_statement_usage_cost_gbp=None,
+        latest_electricity_statement_standing_charge_gbp=None,
+        latest_gas_statement_total_gbp=None,
+        latest_gas_statement_quantity_kwh=None,
+    )
+    entities = sensor_module._build_sensors(
+        "entry-123", _DummyCoordinator(snapshot_without_statement_breakdown)
+    )
+
+    assert _entity_by_suffix(entities, "latest_statement_issued_at").native_value is None
+    assert _entity_by_suffix(entities, "latest_statement_period_start").native_value is None
+    assert _entity_by_suffix(entities, "latest_statement_period_end").native_value is None
+    assert _entity_by_suffix(entities, "latest_statement_payment_due_at").native_value is None
+    assert _entity_by_suffix(entities, "latest_statement_opening_balance").native_value is None
+    assert _entity_by_suffix(entities, "latest_statement_closing_balance").native_value is None
+    assert _entity_by_suffix(entities, "latest_statement_charges").native_value is None
+    assert _entity_by_suffix(entities, "latest_statement_credits").native_value is None
+    assert _entity_by_suffix(entities, "latest_direct_debit_amount").native_value is None
+    assert _entity_by_suffix(entities, "latest_direct_debit_at").native_value is None
+    assert _entity_by_suffix(entities, "latest_electricity_statement_total").native_value is None
+    assert (
+        _entity_by_suffix(entities, "latest_electricity_statement_quantity").native_value
+        is None
+    )
+    assert (
+        _entity_by_suffix(entities, "latest_electricity_statement_usage_cost").native_value
+        is None
+    )
+    assert (
+        _entity_by_suffix(entities, "latest_electricity_statement_standing_charge").native_value
+        is None
+    )
+    assert _entity_by_suffix(entities, "latest_gas_statement_total").native_value is None
+    assert _entity_by_suffix(entities, "latest_gas_statement_quantity").native_value is None
 
 
 @pytest.mark.asyncio

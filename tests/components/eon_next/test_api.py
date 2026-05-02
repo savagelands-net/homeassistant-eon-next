@@ -124,6 +124,66 @@ def _statement_node(
     }
 
 
+def _statement_transaction_charge(
+    *,
+    title: str,
+    posted_date: str,
+    gross_total: int,
+    quantity: str | None = None,
+    usage_cost: int | None = None,
+    supply_charge: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "__typename": "ChargeType",
+        "title": title,
+        "postedDate": posted_date,
+        "amounts": {"grossTotal": gross_total},
+        "consumption": {"quantity": quantity} if quantity is not None else None,
+        "usageCost": {"grossTotal": usage_cost} if usage_cost is not None else None,
+        "supplyCharge": {"grossTotal": supply_charge}
+        if supply_charge is not None
+        else None,
+    }
+
+
+def _statement_transaction_payment(
+    *, title: str,
+    posted_date: str,
+    gross_total: int,
+) -> dict[str, Any]:
+    return {
+        "__typename": "PaymentType",
+        "title": title,
+        "postedDate": posted_date,
+        "amounts": {"grossTotal": gross_total},
+    }
+
+
+def _statement_bill_node(*transactions: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "__typename": "StatementType",
+        "billType": "statement",
+        "issuedDate": "2026-04-20",
+        "fromDate": "2026-03-21",
+        "toDate": "2026-04-19",
+        "openingBalance": 37023,
+        "closingBalance": 31061,
+        "paymentDueDate": "2026-05-05",
+        "status": "ISSUED",
+        "totalCharges": {
+            "netTotal": 43778,
+            "taxTotal": 2189,
+            "grossTotal": 45967,
+        },
+        "totalCredits": {
+            "netTotal": 0,
+            "taxTotal": 0,
+            "grossTotal": 0,
+        },
+        "transactions": {"edges": [{"node": transaction} for transaction in transactions]},
+    }
+
+
 def _gas_agreement_payload_with_meter_readings(*readings: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": "gas-agreement-current",
@@ -274,6 +334,121 @@ def test_build_account_snapshot_includes_account_and_agreement_metadata() -> Non
     assert snapshot.latest_meter_reading_register_digits == 5
     assert snapshot.latest_meter_reading_register_is_quarantined is False
     assert snapshot.meter_point_mpan == "0012345678901"
+
+
+def test_build_account_snapshot_includes_latest_statement_breakdown() -> None:
+    agreement = _agreement_payload_with_meter_readings()
+    account = _account_payload(
+        balance=31061,
+        bills=_bills_payload(
+            _statement_bill_node(
+                _statement_transaction_payment(
+                    title="Direct debit",
+                    posted_date="2026-04-01",
+                    gross_total=40005,
+                ),
+                _statement_transaction_charge(
+                    title="Electricity",
+                    posted_date="2026-03-28",
+                    gross_total=14920,
+                    quantity="969.9660",
+                    usage_cost=13840,
+                    supply_charge=1080,
+                ),
+                _statement_transaction_charge(
+                    title="Electricity",
+                    posted_date="2026-04-19",
+                    gross_total=14131,
+                    quantity="601.7820",
+                    usage_cost=13351,
+                    supply_charge=780,
+                ),
+                _statement_transaction_charge(
+                    title="Gas",
+                    posted_date="2026-03-28",
+                    gross_total=10432,
+                    quantity="1720.0000",
+                    usage_cost=999999,
+                    supply_charge=999999,
+                ),
+                _statement_transaction_charge(
+                    title="Gas",
+                    posted_date="2026-04-19",
+                    gross_total=6484,
+                    quantity="1001.0600",
+                    usage_cost=999999,
+                    supply_charge=999999,
+                ),
+            )
+        ),
+    )
+
+    snapshot = build_account_snapshot(
+        account,
+        agreement,
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.latest_statement_issued_at == datetime(2026, 4, 20, 0, 0, tzinfo=UTC)
+    assert snapshot.latest_statement_period_start == datetime(
+        2026, 3, 21, 0, 0, tzinfo=UTC
+    )
+    assert snapshot.latest_statement_period_end == datetime(2026, 4, 19, 0, 0, tzinfo=UTC)
+    assert snapshot.latest_statement_payment_due_at == datetime(
+        2026, 5, 5, 0, 0, tzinfo=UTC
+    )
+    assert snapshot.current_account_balance_gbp == 310.61
+    assert snapshot.latest_statement_opening_balance_gbp == 370.23
+    assert snapshot.latest_statement_closing_balance_gbp == 310.61
+    assert snapshot.latest_statement_charges_gbp == 459.67
+    assert snapshot.latest_statement_credits_gbp == 0
+    assert snapshot.latest_direct_debit_amount_gbp == 400.05
+    assert snapshot.latest_direct_debit_at == datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
+    assert snapshot.latest_electricity_statement_total_gbp == 290.51
+    assert snapshot.latest_electricity_statement_quantity_kwh == 1571.748
+    assert snapshot.latest_electricity_statement_usage_cost_gbp == 271.91
+    assert snapshot.latest_electricity_statement_standing_charge_gbp == 18.6
+    assert snapshot.latest_gas_statement_total_gbp == 169.16
+    assert snapshot.latest_gas_statement_quantity_kwh == 2721.06
+
+
+def test_build_account_snapshot_returns_none_for_missing_statement_breakdown_rows() -> None:
+    agreement = _agreement_payload_with_meter_readings()
+    account = _account_payload(
+        balance=31061,
+        bills=_bills_payload(
+            _statement_bill_node(
+                _statement_transaction_payment(
+                    title="Card payment",
+                    posted_date="2026-04-22",
+                    gross_total=1234,
+                ),
+                _statement_transaction_charge(
+                    title="Other",
+                    posted_date="2026-04-19",
+                    gross_total=555,
+                    quantity="not-a-number",
+                ),
+            )
+        ),
+    )
+
+    snapshot = build_account_snapshot(
+        account,
+        agreement,
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.current_account_balance_gbp == 310.61
+    assert snapshot.latest_statement_charges_gbp == 459.67
+    assert snapshot.latest_direct_debit_amount_gbp is None
+    assert snapshot.latest_direct_debit_at is None
+    assert snapshot.latest_electricity_statement_total_gbp is None
+    assert snapshot.latest_electricity_statement_quantity_kwh is None
+    assert snapshot.latest_electricity_statement_usage_cost_gbp is None
+    assert snapshot.latest_electricity_statement_standing_charge_gbp is None
+    assert snapshot.latest_gas_statement_total_gbp is None
+    assert snapshot.latest_gas_statement_quantity_kwh is None
 
 
 def test_build_account_snapshot_includes_billing_and_gas_fields() -> None:
@@ -909,6 +1084,7 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
         latest_meter_reading_register_is_quarantined=None,
         meter_point_mpan="0012345678901",
         current_account_balance_gbp=123.45,
+        latest_statement_issued_at=datetime(2026, 5, 1, 0, 0, tzinfo=UTC),
         latest_statement_closing_balance_gbp=98.76,
         latest_statement_charges_gbp=54.32,
         gas_rate_gbp_per_kwh=0.06543,
@@ -933,10 +1109,10 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
     assert session.requests[1]["json"]["query"] == VIEWER_QUERY
     assert session.requests[1]["headers"]["authorization"] == "JWT access-1"
     assert session.requests[2]["json"]["query"] == AGREEMENTS_QUERY
-    assert "bills(last: 5, orderBy: ISSUED_DATE_DESC)" in session.requests[2]["json"]["query"]
+    assert "bills(first: 1, orderBy: ISSUED_DATE_DESC)" in session.requests[2]["json"]["query"]
     assert session.requests[2]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert session.requests[3]["json"]["query"] == AGREEMENTS_QUERY
-    assert "bills(last: 5, orderBy: ISSUED_DATE_DESC)" in session.requests[3]["json"]["query"]
+    assert "bills(first: 1, orderBy: ISSUED_DATE_DESC)" in session.requests[3]["json"]["query"]
     assert session.requests[3]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert snapshot.current_account_balance_gbp == 123.45
     assert snapshot.latest_statement_closing_balance_gbp == 98.76
