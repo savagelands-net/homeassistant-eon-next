@@ -20,6 +20,18 @@ from .const import (
     ATTR_AGREEMENT_VALID_FROM,
     ATTR_AGREEMENT_VALID_TO,
     ATTR_CURRENT_WINDOW_END,
+    ATTR_GAS_AGREEMENT_VALID_FROM,
+    ATTR_GAS_AGREEMENT_VALID_TO,
+    ATTR_GAS_METER_POINT_MPRN,
+    ATTR_GAS_PRE_VAT_RATE_GBP_PER_KWH,
+    ATTR_GAS_TARIFF_CODE,
+    ATTR_GAS_TARIFF_NAME,
+    ATTR_LATEST_GAS_METER_READING_REGISTER_DIGITS,
+    ATTR_LATEST_GAS_METER_READING_REGISTER_IDENTIFIER,
+    ATTR_LATEST_GAS_METER_READING_REGISTER_IS_QUARANTINED,
+    ATTR_LATEST_GAS_METER_READING_REGISTER_NAME,
+    ATTR_LATEST_GAS_METER_READING_SOURCE,
+    ATTR_LATEST_GAS_METER_READING_TYPE,
     ATTR_LATEST_METER_READING_REGISTER_DIGITS,
     ATTR_LATEST_METER_READING_REGISTER_IDENTIFIER,
     ATTR_LATEST_METER_READING_REGISTER_IS_QUARANTINED,
@@ -38,6 +50,7 @@ from .coordinator import EonNextRatesCoordinator
 
 RATE_UNIT = "GBP/kWh"
 CHARGE_UNIT = "GBP/day"
+BALANCE_UNIT = "GBP"
 READING_UNIT = "kWh"
 
 
@@ -102,6 +115,56 @@ SENSOR_DESCRIPTIONS = (
         unique_id_suffix="account_number",
     ),
     EonRateSensorDescription(
+        key="current_account_balance",
+        name="E.ON Current Account Balance",
+        native_unit_of_measurement=BALANCE_UNIT,
+        value_attr="current_account_balance_gbp",
+        unique_id_suffix="current_account_balance",
+    ),
+    EonRateSensorDescription(
+        key="latest_statement_closing_balance",
+        name="E.ON Latest Statement Closing Balance",
+        native_unit_of_measurement=BALANCE_UNIT,
+        value_attr="latest_statement_closing_balance_gbp",
+        unique_id_suffix="latest_statement_closing_balance",
+    ),
+    EonRateSensorDescription(
+        key="latest_statement_charges",
+        name="E.ON Latest Statement Charges",
+        native_unit_of_measurement=BALANCE_UNIT,
+        value_attr="latest_statement_charges_gbp",
+        unique_id_suffix="latest_statement_charges",
+    ),
+    EonRateSensorDescription(
+        key="gas_unit_rate",
+        name="E.ON Gas Unit Rate",
+        native_unit_of_measurement=RATE_UNIT,
+        value_attr="gas_rate_gbp_per_kwh",
+        unique_id_suffix="gas_unit_rate",
+        attribute_fields={
+            ATTR_GAS_TARIFF_NAME: "gas_tariff_name",
+            ATTR_GAS_TARIFF_CODE: "gas_tariff_code",
+            ATTR_GAS_PRE_VAT_RATE_GBP_PER_KWH: "gas_pre_vat_rate_gbp_per_kwh",
+            ATTR_GAS_AGREEMENT_VALID_FROM: "gas_agreement_valid_from",
+            ATTR_GAS_AGREEMENT_VALID_TO: "gas_agreement_valid_to",
+            ATTR_GAS_METER_POINT_MPRN: "gas_meter_point_mprn",
+        },
+    ),
+    EonRateSensorDescription(
+        key="gas_standing_charge",
+        name="E.ON Gas Standing Charge",
+        native_unit_of_measurement=CHARGE_UNIT,
+        value_attr="gas_standing_charge_gbp_per_day",
+        unique_id_suffix="gas_standing_charge",
+    ),
+    EonRateSensorDescription(
+        key="gas_standing_charge_ex_vat",
+        name="E.ON Gas Standing Charge Ex VAT",
+        native_unit_of_measurement=CHARGE_UNIT,
+        value_attr="gas_pre_vat_standing_charge_gbp_per_day",
+        unique_id_suffix="gas_standing_charge_ex_vat",
+    ),
+    EonRateSensorDescription(
         key="latest_meter_reading",
         name="E.ON Latest Meter Reading",
         native_unit_of_measurement=READING_UNIT,
@@ -125,6 +188,32 @@ SENSOR_DESCRIPTIONS = (
         device_class=SensorDeviceClass.TIMESTAMP,
         value_attr="latest_meter_reading_at",
         unique_id_suffix="latest_meter_reading_at",
+    ),
+    EonRateSensorDescription(
+        key="latest_gas_meter_reading",
+        name="E.ON Latest Gas Meter Reading",
+        value_attr="latest_gas_meter_reading_value",
+        unique_id_suffix="latest_gas_meter_reading",
+        attribute_fields={
+            ATTR_GAS_METER_POINT_MPRN: "gas_meter_point_mprn",
+            ATTR_LATEST_GAS_METER_READING_SOURCE: "latest_gas_meter_reading_source",
+            ATTR_LATEST_GAS_METER_READING_TYPE: "latest_gas_meter_reading_type",
+            ATTR_LATEST_GAS_METER_READING_REGISTER_IDENTIFIER:
+                "latest_gas_meter_reading_register_identifier",
+            ATTR_LATEST_GAS_METER_READING_REGISTER_NAME:
+                "latest_gas_meter_reading_register_name",
+            ATTR_LATEST_GAS_METER_READING_REGISTER_DIGITS:
+                "latest_gas_meter_reading_register_digits",
+            ATTR_LATEST_GAS_METER_READING_REGISTER_IS_QUARANTINED:
+                "latest_gas_meter_reading_register_is_quarantined",
+        },
+    ),
+    EonRateSensorDescription(
+        key="latest_gas_meter_reading_at",
+        name="E.ON Latest Gas Meter Reading Time",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_attr="latest_gas_meter_reading_at",
+        unique_id_suffix="latest_gas_meter_reading_at",
     ),
 )
 

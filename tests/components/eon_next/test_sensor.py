@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 import types
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -163,6 +163,26 @@ def snapshot() -> AccountSnapshot:
         latest_meter_reading_register_digits=5,
         latest_meter_reading_register_is_quarantined=False,
         meter_point_mpan="0012345678901",
+        current_account_balance_gbp=123.45,
+        latest_statement_closing_balance_gbp=98.76,
+        latest_statement_charges_gbp=54.32,
+        gas_rate_gbp_per_kwh=0.06543,
+        gas_pre_vat_rate_gbp_per_kwh=0.06231,
+        gas_tariff_name="Next Flex Gas",
+        gas_tariff_code="G-1R-NEXT_FLEX_GAS",
+        gas_standing_charge_gbp_per_day=0.312,
+        gas_pre_vat_standing_charge_gbp_per_day=0.297,
+        gas_agreement_valid_from=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        gas_agreement_valid_to=None,
+        latest_gas_meter_reading_value=4567.0,
+        latest_gas_meter_reading_at=datetime(2026, 5, 2, 13, 0, tzinfo=UTC),
+        latest_gas_meter_reading_source="CUSTOMER",
+        latest_gas_meter_reading_type="actual",
+        latest_gas_meter_reading_register_identifier="GAS-001",
+        latest_gas_meter_reading_register_name="GAS",
+        latest_gas_meter_reading_register_digits=4,
+        latest_gas_meter_reading_register_is_quarantined=False,
+        gas_meter_point_mprn="1234567890",
     )
 
 
@@ -189,7 +209,7 @@ async def test_async_setup_entry_uses_stored_coordinator(sensor_module, snapshot
         lambda entities: added_entities.extend(entities),
     )
 
-    assert len(added_entities) == 8
+    assert len(added_entities) == 16
     assert added_entities[0].coordinator is coordinator
 
 
@@ -267,6 +287,144 @@ def test_latest_meter_reading_timestamp_sensor_exposes_expected_datetime(
 
     assert timestamp_sensor.name == "E.ON Latest Meter Reading Time"
     assert timestamp_sensor.native_value == datetime(2026, 5, 2, 11, 0, tzinfo=UTC)
+
+
+def test_billing_sensors_expose_expected_values(sensor_module, snapshot) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+
+    current_balance_sensor = _entity_by_suffix(entities, "current_account_balance")
+    statement_closing_balance_sensor = _entity_by_suffix(
+        entities, "latest_statement_closing_balance"
+    )
+    statement_charges_sensor = _entity_by_suffix(entities, "latest_statement_charges")
+
+    assert current_balance_sensor.name == "E.ON Current Account Balance"
+    assert current_balance_sensor.native_value == 123.45
+    assert current_balance_sensor.native_unit_of_measurement == "GBP"
+    assert statement_closing_balance_sensor.name == "E.ON Latest Statement Closing Balance"
+    assert statement_closing_balance_sensor.native_value == 98.76
+    assert statement_closing_balance_sensor.native_unit_of_measurement == "GBP"
+    assert statement_charges_sensor.name == "E.ON Latest Statement Charges"
+    assert statement_charges_sensor.native_value == 54.32
+    assert statement_charges_sensor.native_unit_of_measurement == "GBP"
+
+
+def test_gas_rate_and_charge_sensors_expose_expected_values(
+    sensor_module, snapshot
+) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+
+    gas_rate_sensor = _entity_by_suffix(entities, "gas_unit_rate")
+    gas_standing_charge_sensor = _entity_by_suffix(entities, "gas_standing_charge")
+    gas_standing_charge_ex_vat_sensor = _entity_by_suffix(
+        entities, "gas_standing_charge_ex_vat"
+    )
+
+    assert gas_rate_sensor.name == "E.ON Gas Unit Rate"
+    assert gas_rate_sensor.native_value == 0.06543
+    assert gas_rate_sensor.native_unit_of_measurement == "GBP/kWh"
+    assert gas_rate_sensor.extra_state_attributes == {
+        "gas_tariff_name": "Next Flex Gas",
+        "gas_tariff_code": "G-1R-NEXT_FLEX_GAS",
+        "gas_pre_vat_rate_gbp_per_kwh": 0.06231,
+        "gas_agreement_valid_from": datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        "gas_agreement_valid_to": None,
+        "gas_meter_point_mprn": "1234567890",
+    }
+    assert gas_standing_charge_sensor.name == "E.ON Gas Standing Charge"
+    assert gas_standing_charge_sensor.native_value == 0.312
+    assert gas_standing_charge_sensor.native_unit_of_measurement == "GBP/day"
+    assert gas_standing_charge_ex_vat_sensor.name == "E.ON Gas Standing Charge Ex VAT"
+    assert gas_standing_charge_ex_vat_sensor.native_value == 0.297
+    assert gas_standing_charge_ex_vat_sensor.native_unit_of_measurement == "GBP/day"
+
+
+def test_latest_gas_meter_reading_sensors_expose_expected_values(
+    sensor_module, snapshot
+) -> None:
+    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
+
+    gas_reading_sensor = _entity_by_suffix(entities, "latest_gas_meter_reading")
+    gas_reading_timestamp_sensor = _entity_by_suffix(
+        entities, "latest_gas_meter_reading_at"
+    )
+
+    assert gas_reading_sensor.name == "E.ON Latest Gas Meter Reading"
+    assert gas_reading_sensor.native_value == 4567.0
+    assert gas_reading_sensor.native_unit_of_measurement is None
+    assert gas_reading_sensor.extra_state_attributes == {
+        "gas_meter_point_mprn": "1234567890",
+        "latest_gas_meter_reading_source": "CUSTOMER",
+        "latest_gas_meter_reading_type": "actual",
+        "latest_gas_meter_reading_register_identifier": "GAS-001",
+        "latest_gas_meter_reading_register_name": "GAS",
+        "latest_gas_meter_reading_register_digits": 4,
+        "latest_gas_meter_reading_register_is_quarantined": False,
+    }
+    assert gas_reading_timestamp_sensor.name == "E.ON Latest Gas Meter Reading Time"
+    assert gas_reading_timestamp_sensor.native_value == datetime(
+        2026, 5, 2, 13, 0, tzinfo=UTC
+    )
+
+
+def test_optional_billing_and_gas_sensors_return_none_when_data_is_absent(
+    sensor_module, snapshot
+) -> None:
+    snapshot_without_optional_data = replace(
+        snapshot,
+        current_account_balance_gbp=None,
+        latest_statement_closing_balance_gbp=None,
+        latest_statement_charges_gbp=None,
+        gas_rate_gbp_per_kwh=None,
+        gas_pre_vat_rate_gbp_per_kwh=None,
+        gas_tariff_name=None,
+        gas_tariff_code=None,
+        gas_standing_charge_gbp_per_day=None,
+        gas_pre_vat_standing_charge_gbp_per_day=None,
+        gas_agreement_valid_from=None,
+        gas_agreement_valid_to=None,
+        latest_gas_meter_reading_value=None,
+        latest_gas_meter_reading_at=None,
+        latest_gas_meter_reading_source=None,
+        latest_gas_meter_reading_type=None,
+        latest_gas_meter_reading_register_identifier=None,
+        latest_gas_meter_reading_register_name=None,
+        latest_gas_meter_reading_register_digits=None,
+        latest_gas_meter_reading_register_is_quarantined=None,
+        gas_meter_point_mprn=None,
+    )
+    entities = sensor_module._build_sensors(
+        "entry-123", _DummyCoordinator(snapshot_without_optional_data)
+    )
+
+    assert _entity_by_suffix(entities, "current_account_balance").native_value is None
+    assert (
+        _entity_by_suffix(entities, "latest_statement_closing_balance").native_value
+        is None
+    )
+    assert _entity_by_suffix(entities, "latest_statement_charges").native_value is None
+    assert _entity_by_suffix(entities, "gas_unit_rate").native_value is None
+    assert _entity_by_suffix(entities, "gas_unit_rate").extra_state_attributes == {
+        "gas_tariff_name": None,
+        "gas_tariff_code": None,
+        "gas_pre_vat_rate_gbp_per_kwh": None,
+        "gas_agreement_valid_from": None,
+        "gas_agreement_valid_to": None,
+        "gas_meter_point_mprn": None,
+    }
+    assert _entity_by_suffix(entities, "gas_standing_charge").native_value is None
+    assert _entity_by_suffix(entities, "gas_standing_charge_ex_vat").native_value is None
+    assert _entity_by_suffix(entities, "latest_gas_meter_reading").native_value is None
+    assert _entity_by_suffix(entities, "latest_gas_meter_reading_at").native_value is None
+    assert _entity_by_suffix(entities, "latest_gas_meter_reading").extra_state_attributes == {
+        "gas_meter_point_mprn": None,
+        "latest_gas_meter_reading_source": None,
+        "latest_gas_meter_reading_type": None,
+        "latest_gas_meter_reading_register_identifier": None,
+        "latest_gas_meter_reading_register_name": None,
+        "latest_gas_meter_reading_register_digits": None,
+        "latest_gas_meter_reading_register_is_quarantined": None,
+    }
 
 
 @pytest.mark.asyncio

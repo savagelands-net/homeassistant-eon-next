@@ -15,6 +15,12 @@ ATTR_CURRENT_WINDOW_END = "current_window_end"
 ATTR_NEXT_WINDOW_START = "next_window_start"
 ATTR_AGREEMENT_VALID_FROM = "agreement_valid_from"
 ATTR_AGREEMENT_VALID_TO = "agreement_valid_to"
+ATTR_GAS_TARIFF_NAME = "gas_tariff_name"
+ATTR_GAS_TARIFF_CODE = "gas_tariff_code"
+ATTR_GAS_PRE_VAT_RATE_GBP_PER_KWH = "gas_pre_vat_rate_gbp_per_kwh"
+ATTR_GAS_AGREEMENT_VALID_FROM = "gas_agreement_valid_from"
+ATTR_GAS_AGREEMENT_VALID_TO = "gas_agreement_valid_to"
+ATTR_GAS_METER_POINT_MPRN = "gas_meter_point_mprn"
 ATTR_METER_POINT_MPAN = "meter_point_mpan"
 ATTR_LATEST_METER_READING_SOURCE = "latest_meter_reading_source"
 ATTR_LATEST_METER_READING_TYPE = "latest_meter_reading_type"
@@ -23,4 +29,16 @@ ATTR_LATEST_METER_READING_REGISTER_NAME = "latest_meter_reading_register_name"
 ATTR_LATEST_METER_READING_REGISTER_DIGITS = "latest_meter_reading_register_digits"
 ATTR_LATEST_METER_READING_REGISTER_IS_QUARANTINED = (
     "latest_meter_reading_register_is_quarantined"
+)
+ATTR_LATEST_GAS_METER_READING_SOURCE = "latest_gas_meter_reading_source"
+ATTR_LATEST_GAS_METER_READING_TYPE = "latest_gas_meter_reading_type"
+ATTR_LATEST_GAS_METER_READING_REGISTER_IDENTIFIER = (
+    "latest_gas_meter_reading_register_identifier"
+)
+ATTR_LATEST_GAS_METER_READING_REGISTER_NAME = "latest_gas_meter_reading_register_name"
+ATTR_LATEST_GAS_METER_READING_REGISTER_DIGITS = (
+    "latest_gas_meter_reading_register_digits"
+)
+ATTR_LATEST_GAS_METER_READING_REGISTER_IS_QUARANTINED = (
+    "latest_gas_meter_reading_register_is_quarantined"
 )

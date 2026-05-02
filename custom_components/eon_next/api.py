@@ -45,6 +45,22 @@ VIEWER_QUERY = """query headerGetLoggedInUser {
 AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
   account(accountNumber: $accountNumber) {
     number
+    balance
+    bills(last: 5, orderBy: ISSUED_DATE_DESC) {
+      edges {
+        node {
+          __typename
+          billType
+          issuedDate
+          ... on StatementType {
+            closingBalance
+            totalCharges {
+              grossTotal
+            }
+          }
+        }
+      }
+    }
     electricityAgreements {
       id
       validFrom
@@ -80,6 +96,35 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
         }
       }
     }
+    gasAgreements {
+      id
+      validFrom
+      validTo
+      meterPoint {
+        mprn
+        unbilledReadings {
+          readAt
+          readingSource
+          source
+          readingType
+          registers {
+            identifier
+            name
+            value
+            digits
+            isQuarantined
+          }
+        }
+      }
+      tariff {
+        displayName
+        tariffCode
+        standingCharge
+        preVatStandingCharge
+        unitRate
+        preVatUnitRate
+      }
+    }
   }
 }"""
 
@@ -107,6 +152,26 @@ class AccountSnapshot:
     latest_meter_reading_register_digits: int | None = None
     latest_meter_reading_register_is_quarantined: bool | None = None
     meter_point_mpan: str | None = None
+    current_account_balance_gbp: float | None = None
+    latest_statement_closing_balance_gbp: float | None = None
+    latest_statement_charges_gbp: float | None = None
+    gas_rate_gbp_per_kwh: float | None = None
+    gas_pre_vat_rate_gbp_per_kwh: float | None = None
+    gas_tariff_name: str | None = None
+    gas_tariff_code: str | None = None
+    gas_standing_charge_gbp_per_day: float | None = None
+    gas_pre_vat_standing_charge_gbp_per_day: float | None = None
+    gas_agreement_valid_from: datetime | None = None
+    gas_agreement_valid_to: datetime | None = None
+    latest_gas_meter_reading_value: float | None = None
+    latest_gas_meter_reading_at: datetime | None = None
+    latest_gas_meter_reading_source: str | None = None
+    latest_gas_meter_reading_type: str | None = None
+    latest_gas_meter_reading_register_identifier: str | None = None
+    latest_gas_meter_reading_register_name: str | None = None
+    latest_gas_meter_reading_register_digits: int | None = None
+    latest_gas_meter_reading_register_is_quarantined: bool | None = None
+    gas_meter_point_mprn: str | None = None
 
 
 class EonNextRatesError(Exception):
@@ -370,6 +435,13 @@ def _optional_pence_to_gbp(value: float | None) -> float | None:
     return _pence_to_gbp(value)
 
 
+def _optional_minor_units_to_gbp(value: int | None) -> float | None:
+    if value is None:
+        return None
+
+    return value / 100
+
+
 def _parse_meter_reading_value(value: str | None) -> float | None:
     if value is None:
         return None
@@ -391,6 +463,195 @@ def _empty_meter_reading_fields(mpan: str | None) -> dict[str, Any]:
         "latest_meter_reading_register_digits": None,
         "latest_meter_reading_register_is_quarantined": None,
         "meter_point_mpan": mpan,
+    }
+
+
+def _billing_fields(account: dict) -> dict[str, Any]:
+    statement_closing_balance = None
+    statement_charges = None
+    bills = account.get("bills")
+
+    if isinstance(bills, dict):
+        edges = bills.get("edges")
+        if isinstance(edges, list):
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    continue
+
+                latest_bill = edge.get("node")
+                if not isinstance(latest_bill, dict):
+                    continue
+
+                if latest_bill.get("__typename") != "StatementType":
+                    continue
+
+                statement_closing_balance = _optional_minor_units_to_gbp(
+                    latest_bill.get("closingBalance")
+                )
+                total_charges = latest_bill.get("totalCharges")
+                if isinstance(total_charges, dict):
+                    statement_charges = _optional_minor_units_to_gbp(
+                        total_charges.get("grossTotal")
+                    )
+                break
+
+    return {
+        "current_account_balance_gbp": _optional_minor_units_to_gbp(
+            account.get("balance")
+        ),
+        "latest_statement_closing_balance_gbp": statement_closing_balance,
+        "latest_statement_charges_gbp": statement_charges,
+    }
+
+
+def _empty_gas_fields(mprn: str | None = None) -> dict[str, Any]:
+    return {
+        "gas_rate_gbp_per_kwh": None,
+        "gas_pre_vat_rate_gbp_per_kwh": None,
+        "gas_tariff_name": None,
+        "gas_tariff_code": None,
+        "gas_standing_charge_gbp_per_day": None,
+        "gas_pre_vat_standing_charge_gbp_per_day": None,
+        "gas_agreement_valid_from": None,
+        "gas_agreement_valid_to": None,
+        "latest_gas_meter_reading_value": None,
+        "latest_gas_meter_reading_at": None,
+        "latest_gas_meter_reading_source": None,
+        "latest_gas_meter_reading_type": None,
+        "latest_gas_meter_reading_register_identifier": None,
+        "latest_gas_meter_reading_register_name": None,
+        "latest_gas_meter_reading_register_digits": None,
+        "latest_gas_meter_reading_register_is_quarantined": None,
+        "gas_meter_point_mprn": mprn,
+    }
+
+
+def _empty_gas_meter_reading_fields(mprn: str | None = None) -> dict[str, Any]:
+    return {
+        "latest_gas_meter_reading_value": None,
+        "latest_gas_meter_reading_at": None,
+        "latest_gas_meter_reading_source": None,
+        "latest_gas_meter_reading_type": None,
+        "latest_gas_meter_reading_register_identifier": None,
+        "latest_gas_meter_reading_register_name": None,
+        "latest_gas_meter_reading_register_digits": None,
+        "latest_gas_meter_reading_register_is_quarantined": None,
+        "gas_meter_point_mprn": mprn,
+    }
+
+
+def select_active_gas_agreement(account: dict, now: datetime) -> dict | None:
+    gas_agreements = account.get("gasAgreements")
+    if not isinstance(gas_agreements, list):
+        return None
+
+    for agreement in gas_agreements:
+        if not isinstance(agreement, dict):
+            continue
+
+        tariff = agreement.get("tariff")
+        if not isinstance(tariff, dict):
+            continue
+
+        try:
+            valid_from = _parse_datetime(agreement.get("validFrom"))
+            valid_to = _parse_datetime(agreement.get("validTo"))
+        except ValueError:
+            continue
+
+        if valid_from is None:
+            continue
+
+        if valid_from <= now and (valid_to is None or now < valid_to):
+            return agreement
+
+    return None
+
+
+def _latest_gas_meter_reading_fields(meter_point: dict | None) -> dict[str, Any]:
+    if not isinstance(meter_point, dict):
+        return _empty_gas_meter_reading_fields()
+
+    mprn = meter_point.get("mprn")
+    unbilled_readings = meter_point.get("unbilledReadings")
+    if not isinstance(unbilled_readings, list):
+        return _empty_gas_meter_reading_fields(mprn)
+
+    def _parse_read_at(reading: dict[str, Any]) -> datetime | None:
+        if not isinstance(reading, dict):
+            return None
+
+        try:
+            return _parse_datetime(reading.get("readAt"))
+        except ValueError:
+            return None
+
+    sorted_readings = sorted(
+        ((_parse_read_at(reading), reading) for reading in unbilled_readings),
+        key=lambda item: item[0] or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+
+    for read_at, reading in sorted_readings:
+        if read_at is None or not isinstance(reading, dict):
+            continue
+
+        registers = reading.get("registers")
+        if not isinstance(registers, list):
+            continue
+
+        for register in registers:
+            if not isinstance(register, dict):
+                continue
+
+            reading_value = _parse_meter_reading_value(register.get("value"))
+            if reading_value is None:
+                continue
+
+            return {
+                "latest_gas_meter_reading_value": reading_value,
+                "latest_gas_meter_reading_at": read_at,
+                "latest_gas_meter_reading_source": reading.get("readingSource")
+                or reading.get("source"),
+                "latest_gas_meter_reading_type": reading.get("readingType"),
+                "latest_gas_meter_reading_register_identifier": register.get(
+                    "identifier"
+                ),
+                "latest_gas_meter_reading_register_name": register.get("name"),
+                "latest_gas_meter_reading_register_digits": register.get("digits"),
+                "latest_gas_meter_reading_register_is_quarantined": register.get(
+                    "isQuarantined"
+                ),
+                "gas_meter_point_mprn": mprn,
+            }
+
+    return _empty_gas_meter_reading_fields(mprn)
+
+
+def _gas_fields(account: dict, now: datetime) -> dict[str, Any]:
+    agreement = select_active_gas_agreement(account, now)
+    if agreement is None:
+        return _empty_gas_fields()
+
+    tariff = agreement["tariff"]
+    meter_reading_fields = _latest_gas_meter_reading_fields(agreement.get("meterPoint"))
+
+    return {
+        "gas_rate_gbp_per_kwh": _optional_pence_to_gbp(tariff.get("unitRate")),
+        "gas_pre_vat_rate_gbp_per_kwh": _optional_pence_to_gbp(
+            tariff.get("preVatUnitRate")
+        ),
+        "gas_tariff_name": tariff.get("displayName"),
+        "gas_tariff_code": tariff.get("tariffCode"),
+        "gas_standing_charge_gbp_per_day": _optional_pence_to_gbp(
+            tariff.get("standingCharge")
+        ),
+        "gas_pre_vat_standing_charge_gbp_per_day": _optional_pence_to_gbp(
+            tariff.get("preVatStandingCharge")
+        ),
+        "gas_agreement_valid_from": _parse_datetime(agreement.get("validFrom")),
+        "gas_agreement_valid_to": _parse_datetime(agreement.get("validTo")),
+        **meter_reading_fields,
     }
 
 
@@ -562,6 +823,8 @@ def build_account_snapshot(account: dict, agreement: dict, now: datetime) -> Acc
 
     agreement_valid_to = _parse_datetime(agreement.get("validTo"))
     meter_reading_fields = _latest_meter_reading_fields(agreement.get("meterPoint"))
+    billing_fields = _billing_fields(account)
+    gas_fields = _gas_fields(account, now)
 
     return AccountSnapshot(
         current_rate_gbp_per_kwh=_pence_to_gbp(current_window["value"]),
@@ -580,5 +843,7 @@ def build_account_snapshot(account: dict, agreement: dict, now: datetime) -> Acc
         tariff_name=tariff["displayName"],
         tariff_code=tariff["tariffCode"],
         standing_charge_gbp_per_day=_pence_to_gbp(tariff["standingCharge"]),
+        **billing_fields,
+        **gas_fields,
         **meter_reading_fields,
     )

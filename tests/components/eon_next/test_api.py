@@ -87,8 +87,61 @@ def _viewer_payload_for_accounts(*account_numbers: str) -> dict[str, Any]:
     }
 
 
-def _account_payload(account_number: str = "A-TEST0001") -> dict[str, Any]:
-    return {"number": account_number}
+def _account_payload(
+    account_number: str = "A-TEST0001",
+    *,
+    balance: int | None = None,
+    bills: dict[str, Any] | None = None,
+    gas_agreements: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    account = {"number": account_number}
+    if balance is not None:
+        account["balance"] = balance
+    if bills is not None:
+        account["bills"] = bills
+    if gas_agreements is not None:
+        account["gasAgreements"] = gas_agreements
+    return account
+
+
+def _bills_payload(*nodes: dict[str, Any]) -> dict[str, Any]:
+    return {"edges": [{"node": node} for node in nodes]}
+
+
+def _statement_node(
+    *,
+    bill_type: str = "statement",
+    issued_date: str = "2026-05-01",
+    closing_balance: int = 9876,
+    gross_total: int = 5432,
+) -> dict[str, Any]:
+    return {
+        "__typename": "StatementType",
+        "billType": bill_type,
+        "issuedDate": issued_date,
+        "closingBalance": closing_balance,
+        "totalCharges": {"grossTotal": gross_total},
+    }
+
+
+def _gas_agreement_payload_with_meter_readings(*readings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "gas-agreement-current",
+        "validFrom": "2026-04-01T00:00:00+00:00",
+        "validTo": None,
+        "meterPoint": {
+            "mprn": "1234567890",
+            "unbilledReadings": list(readings),
+        },
+        "tariff": {
+            "displayName": "Next Flex Gas",
+            "tariffCode": "G-1R-NEXT_FLEX_GAS",
+            "standingCharge": 31.2,
+            "preVatStandingCharge": 29.7,
+            "unitRate": 6.543,
+            "preVatUnitRate": 6.231,
+        },
+    }
 
 
 def _agreement_payload_with_meter_readings(*readings: dict[str, Any]) -> dict[str, Any]:
@@ -221,6 +274,176 @@ def test_build_account_snapshot_includes_account_and_agreement_metadata() -> Non
     assert snapshot.latest_meter_reading_register_digits == 5
     assert snapshot.latest_meter_reading_register_is_quarantined is False
     assert snapshot.meter_point_mpan == "0012345678901"
+
+
+def test_build_account_snapshot_includes_billing_and_gas_fields() -> None:
+    agreement = _agreement_payload_with_meter_readings()
+    gas_agreement = _gas_agreement_payload_with_meter_readings(
+        {
+            "readAt": "2026-05-02T13:00:00+00:00",
+            "readingSource": "CUSTOMER",
+            "source": "SMART",
+            "readingType": "actual",
+            "registers": [
+                {
+                    "identifier": "GAS-001",
+                    "name": "GAS",
+                    "value": "4567.0",
+                    "digits": 4,
+                    "isQuarantined": False,
+                }
+            ],
+        }
+    )
+
+    snapshot = build_account_snapshot(
+        _account_payload(
+            balance=12345,
+            bills=_bills_payload(_statement_node()),
+            gas_agreements=[gas_agreement],
+        ),
+        agreement,
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.current_account_balance_gbp == 123.45
+    assert snapshot.latest_statement_closing_balance_gbp == 98.76
+    assert snapshot.latest_statement_charges_gbp == 54.32
+    assert snapshot.gas_rate_gbp_per_kwh == 0.06543
+    assert snapshot.gas_pre_vat_rate_gbp_per_kwh == 0.06231
+    assert snapshot.gas_tariff_name == "Next Flex Gas"
+    assert snapshot.gas_tariff_code == "G-1R-NEXT_FLEX_GAS"
+    assert snapshot.gas_standing_charge_gbp_per_day == 0.312
+    assert snapshot.gas_pre_vat_standing_charge_gbp_per_day == 0.297
+    assert snapshot.gas_agreement_valid_from == datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
+    assert snapshot.gas_agreement_valid_to is None
+    assert snapshot.latest_gas_meter_reading_value == 4567.0
+    assert snapshot.latest_gas_meter_reading_at == datetime(
+        2026, 5, 2, 13, 0, tzinfo=UTC
+    )
+    assert snapshot.latest_gas_meter_reading_source == "CUSTOMER"
+    assert snapshot.latest_gas_meter_reading_type == "actual"
+    assert snapshot.latest_gas_meter_reading_register_identifier == "GAS-001"
+    assert snapshot.latest_gas_meter_reading_register_name == "GAS"
+    assert snapshot.latest_gas_meter_reading_register_digits == 4
+    assert snapshot.latest_gas_meter_reading_register_is_quarantined is False
+    assert snapshot.gas_meter_point_mprn == "1234567890"
+
+
+def test_build_account_snapshot_returns_none_for_optional_billing_and_gas_fields_when_absent(
+) -> None:
+    snapshot = build_account_snapshot(
+        _account_payload(),
+        _agreement_payload_with_meter_readings(),
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.current_account_balance_gbp is None
+    assert snapshot.latest_statement_closing_balance_gbp is None
+    assert snapshot.latest_statement_charges_gbp is None
+    assert snapshot.gas_rate_gbp_per_kwh is None
+    assert snapshot.gas_pre_vat_rate_gbp_per_kwh is None
+    assert snapshot.gas_tariff_name is None
+    assert snapshot.gas_tariff_code is None
+    assert snapshot.gas_standing_charge_gbp_per_day is None
+    assert snapshot.gas_pre_vat_standing_charge_gbp_per_day is None
+    assert snapshot.gas_agreement_valid_from is None
+    assert snapshot.gas_agreement_valid_to is None
+    assert snapshot.latest_gas_meter_reading_value is None
+    assert snapshot.latest_gas_meter_reading_at is None
+    assert snapshot.latest_gas_meter_reading_source is None
+    assert snapshot.latest_gas_meter_reading_type is None
+    assert snapshot.latest_gas_meter_reading_register_identifier is None
+    assert snapshot.latest_gas_meter_reading_register_name is None
+    assert snapshot.latest_gas_meter_reading_register_digits is None
+    assert snapshot.latest_gas_meter_reading_register_is_quarantined is None
+    assert snapshot.gas_meter_point_mprn is None
+
+
+def test_build_account_snapshot_ignores_non_statement_latest_bill(
+) -> None:
+    snapshot = build_account_snapshot(
+        _account_payload(
+            balance=12345,
+            bills=_bills_payload(
+                {
+                    "__typename": "PaymentType",
+                    "billType": "payment",
+                    "issuedDate": "2026-05-01",
+                }
+            ),
+        ),
+        _agreement_payload_with_meter_readings(),
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.current_account_balance_gbp == 123.45
+    assert snapshot.latest_statement_closing_balance_gbp is None
+    assert snapshot.latest_statement_charges_gbp is None
+
+
+def test_build_account_snapshot_uses_first_usable_statement_from_bill_edges() -> None:
+    snapshot = build_account_snapshot(
+        _account_payload(
+            balance=12345,
+            bills=_bills_payload(
+                {
+                    "__typename": "PaymentType",
+                    "billType": "payment",
+                    "issuedDate": "2026-05-02",
+                },
+                _statement_node(
+                    issued_date="2026-05-01",
+                    closing_balance=9876,
+                    gross_total=5432,
+                ),
+            ),
+        ),
+        _agreement_payload_with_meter_readings(),
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.current_account_balance_gbp == 123.45
+    assert snapshot.latest_statement_closing_balance_gbp == 98.76
+    assert snapshot.latest_statement_charges_gbp == 54.32
+
+
+def test_build_account_snapshot_returns_none_for_malformed_optional_gas_meter_payload() -> None:
+    snapshot = build_account_snapshot(
+        _account_payload(
+            gas_agreements=[
+                _gas_agreement_payload_with_meter_readings(
+                    {
+                        "readAt": "2026-05-02T13:00:00+00:00",
+                        "readingSource": "CUSTOMER",
+                        "source": "SMART",
+                        "readingType": "actual",
+                        "registers": {"identifier": "GAS-001"},
+                    }
+                )
+            ]
+        ),
+        _agreement_payload_with_meter_readings(),
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.gas_rate_gbp_per_kwh == 0.06543
+    assert snapshot.gas_pre_vat_rate_gbp_per_kwh == 0.06231
+    assert snapshot.gas_tariff_name == "Next Flex Gas"
+    assert snapshot.gas_tariff_code == "G-1R-NEXT_FLEX_GAS"
+    assert snapshot.gas_standing_charge_gbp_per_day == 0.312
+    assert snapshot.gas_pre_vat_standing_charge_gbp_per_day == 0.297
+    assert snapshot.gas_agreement_valid_from == datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
+    assert snapshot.gas_agreement_valid_to is None
+    assert snapshot.latest_gas_meter_reading_value is None
+    assert snapshot.latest_gas_meter_reading_at is None
+    assert snapshot.latest_gas_meter_reading_source is None
+    assert snapshot.latest_gas_meter_reading_type is None
+    assert snapshot.latest_gas_meter_reading_register_identifier is None
+    assert snapshot.latest_gas_meter_reading_register_name is None
+    assert snapshot.latest_gas_meter_reading_register_digits is None
+    assert snapshot.latest_gas_meter_reading_register_is_quarantined is None
+    assert snapshot.gas_meter_point_mprn == "1234567890"
 
 
 def test_build_account_snapshot_selects_latest_usable_meter_reading() -> None:
@@ -585,6 +808,34 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
         "data": {
             "account": {
                 "number": "A-TEST0001",
+                "balance": 12345,
+                "bills": _bills_payload(
+                    {
+                        "__typename": "PaymentType",
+                        "billType": "payment",
+                        "issuedDate": "2026-05-02",
+                    },
+                    _statement_node(),
+                ),
+                "gasAgreements": [
+                    _gas_agreement_payload_with_meter_readings(
+                        {
+                            "readAt": "2026-05-02T13:00:00+00:00",
+                            "readingSource": "CUSTOMER",
+                            "source": "SMART",
+                            "readingType": "actual",
+                            "registers": [
+                                {
+                                    "identifier": "GAS-001",
+                                    "name": "GAS",
+                                    "value": "4567.0",
+                                    "digits": 4,
+                                    "isQuarantined": False,
+                                }
+                            ],
+                        }
+                    )
+                ],
                 "electricityAgreements": [
                     {
                         "id": "agreement-current",
@@ -657,14 +908,41 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
         latest_meter_reading_register_digits=None,
         latest_meter_reading_register_is_quarantined=None,
         meter_point_mpan="0012345678901",
+        current_account_balance_gbp=123.45,
+        latest_statement_closing_balance_gbp=98.76,
+        latest_statement_charges_gbp=54.32,
+        gas_rate_gbp_per_kwh=0.06543,
+        gas_pre_vat_rate_gbp_per_kwh=0.06231,
+        gas_tariff_name="Next Flex Gas",
+        gas_tariff_code="G-1R-NEXT_FLEX_GAS",
+        gas_standing_charge_gbp_per_day=0.312,
+        gas_pre_vat_standing_charge_gbp_per_day=0.297,
+        gas_agreement_valid_from=datetime(2026, 4, 1, 0, 0, tzinfo=UTC),
+        gas_agreement_valid_to=None,
+        latest_gas_meter_reading_value=4567.0,
+        latest_gas_meter_reading_at=datetime(2026, 5, 2, 13, 0, tzinfo=UTC),
+        latest_gas_meter_reading_source="CUSTOMER",
+        latest_gas_meter_reading_type="actual",
+        latest_gas_meter_reading_register_identifier="GAS-001",
+        latest_gas_meter_reading_register_name="GAS",
+        latest_gas_meter_reading_register_digits=4,
+        latest_gas_meter_reading_register_is_quarantined=False,
+        gas_meter_point_mprn="1234567890",
     )
     assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
     assert session.requests[1]["json"]["query"] == VIEWER_QUERY
     assert session.requests[1]["headers"]["authorization"] == "JWT access-1"
     assert session.requests[2]["json"]["query"] == AGREEMENTS_QUERY
+    assert "bills(last: 5, orderBy: ISSUED_DATE_DESC)" in session.requests[2]["json"]["query"]
     assert session.requests[2]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert session.requests[3]["json"]["query"] == AGREEMENTS_QUERY
+    assert "bills(last: 5, orderBy: ISSUED_DATE_DESC)" in session.requests[3]["json"]["query"]
     assert session.requests[3]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
+    assert snapshot.current_account_balance_gbp == 123.45
+    assert snapshot.latest_statement_closing_balance_gbp == 98.76
+    assert snapshot.latest_statement_charges_gbp == 54.32
+    assert snapshot.gas_rate_gbp_per_kwh == 0.06543
+    assert snapshot.gas_meter_point_mprn == "1234567890"
 
 
 def test_client_refreshes_stale_token_before_reuse() -> None:
