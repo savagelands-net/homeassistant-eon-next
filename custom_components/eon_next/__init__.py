@@ -16,14 +16,42 @@ except ModuleNotFoundError:  # Allows importing submodules in isolated unit test
     EonNextRatesCoordinator = object
 
 
-ELECTRICITY_UNIQUE_ID_MIGRATIONS = {
-    "current_import_rate": "electricity_current_import_rate",
-    "next_import_rate": "electricity_next_import_rate",
-    "next_rate_change_at": "electricity_next_rate_change_at",
-    "standing_charge": "electricity_standing_charge",
-    "standing_charge_ex_vat": "electricity_standing_charge_ex_vat",
-    "latest_meter_reading": "latest_electricity_meter_reading",
-    "latest_meter_reading_at": "latest_electricity_meter_reading_at",
+ELECTRICITY_ENTITY_MIGRATIONS = {
+    "current_import_rate": (
+        "sensor.eon_current_import_rate",
+        "electricity_current_import_rate",
+        "sensor.eon_electricity_current_import_rate",
+    ),
+    "next_import_rate": (
+        "sensor.eon_next_import_rate",
+        "electricity_next_import_rate",
+        "sensor.eon_electricity_next_import_rate",
+    ),
+    "next_rate_change_at": (
+        "sensor.eon_next_rate_change",
+        "electricity_next_rate_change_at",
+        "sensor.eon_electricity_next_rate_change",
+    ),
+    "standing_charge": (
+        "sensor.eon_standing_charge",
+        "electricity_standing_charge",
+        "sensor.eon_electricity_standing_charge",
+    ),
+    "standing_charge_ex_vat": (
+        "sensor.eon_standing_charge_ex_vat",
+        "electricity_standing_charge_ex_vat",
+        "sensor.eon_electricity_standing_charge_ex_vat",
+    ),
+    "latest_meter_reading": (
+        "sensor.eon_latest_meter_reading",
+        "latest_electricity_meter_reading",
+        "sensor.eon_latest_electricity_meter_reading",
+    ),
+    "latest_meter_reading_at": (
+        "sensor.eon_latest_meter_reading_time",
+        "latest_electricity_meter_reading_at",
+        "sensor.eon_latest_electricity_meter_reading_time",
+    ),
 }
 
 
@@ -33,18 +61,37 @@ async def _async_migrate_electricity_unique_ids(
     import homeassistant.helpers.entity_registry as er
 
     registry = er.async_get(hass)
-    for old_suffix, new_suffix in ELECTRICITY_UNIQUE_ID_MIGRATIONS.items():
+    for old_suffix, (
+        old_canonical_entity_id,
+        new_suffix,
+        new_canonical_entity_id,
+    ) in ELECTRICITY_ENTITY_MIGRATIONS.items():
         old_unique_id = f"{entry.entry_id}_{old_suffix}"
         new_unique_id = f"{entry.entry_id}_{new_suffix}"
         old_entity_id = registry.async_get_entity_id("sensor", DOMAIN, old_unique_id)
         if old_entity_id is None:
             continue
 
-        new_entity_id = registry.async_get_entity_id("sensor", DOMAIN, new_unique_id)
-        if new_entity_id is not None:
+        if registry.async_get_entity_id("sensor", DOMAIN, new_unique_id) is not None:
             continue
 
-        registry.async_update_entity(old_entity_id, new_unique_id=new_unique_id)
+        target_entity_id = (
+            new_canonical_entity_id
+            if old_entity_id == old_canonical_entity_id
+            else old_entity_id
+        )
+
+        if (
+            target_entity_id != old_entity_id
+            and registry.async_is_registered(target_entity_id)
+        ):
+            continue
+
+        registry.async_update_entity(
+            old_entity_id,
+            new_entity_id=target_entity_id,
+            new_unique_id=new_unique_id,
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

@@ -37,22 +37,31 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
     class _EntityRegistry:
         def __init__(self) -> None:
             self.entries: dict[str, str] = {}
-            self.update_calls: list[tuple[str, str]] = []
+            self.update_calls: list[tuple[str, str, str]] = []
+
+        def async_is_registered(self, entity_id: str) -> bool:
+            return entity_id in self.entries.values()
 
         def async_get_entity_id(
             self, platform: str, domain: str, unique_id: str
         ) -> str | None:
             return self.entries.get(unique_id)
 
-        def async_update_entity(self, entity_id: str, *, new_unique_id: str) -> None:
+        def async_update_entity(
+            self,
+            entity_id: str,
+            *,
+            new_entity_id: str,
+            new_unique_id: str,
+        ) -> None:
             old_unique_id = next(
                 unique_id
                 for unique_id, existing_entity_id in self.entries.items()
                 if existing_entity_id == entity_id
             )
-            self.update_calls.append((old_unique_id, new_unique_id))
+            self.update_calls.append((entity_id, new_unique_id, new_entity_id))
             self.entries.pop(old_unique_id)
-            self.entries[new_unique_id] = entity_id
+            self.entries[new_unique_id] = new_entity_id
 
     registry = _EntityRegistry()
     entity_registry.RegistryEntry = _RegistryEntry
@@ -313,13 +322,13 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
 
 
 @pytest.mark.asyncio
-async def test_async_setup_entry_migrates_old_electricity_unique_ids(
+async def test_async_setup_entry_migrates_old_electricity_unique_ids_and_entity_ids(
     init_module, integration_stubs, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     registry = integration_stubs
     registry.entries = {
-        "entry-123_current_import_rate": "sensor.current_import_rate",
-        "entry-123_next_import_rate": "sensor.next_import_rate",
+        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
+        "entry-123_next_import_rate": "sensor.eon_next_import_rate",
     }
 
     class _Client:
@@ -353,14 +362,202 @@ async def test_async_setup_entry_migrates_old_electricity_unique_ids(
     assert result is True
     assert registry.update_calls == [
         (
-            "entry-123_current_import_rate",
+            "sensor.eon_current_import_rate",
             "entry-123_electricity_current_import_rate",
+            "sensor.eon_electricity_current_import_rate",
         ),
         (
-            "entry-123_next_import_rate",
+            "sensor.eon_next_import_rate",
             "entry-123_electricity_next_import_rate",
+            "sensor.eon_electricity_next_import_rate",
         ),
     ]
+    assert registry.entries == {
+        "entry-123_electricity_current_import_rate": "sensor.eon_electricity_current_import_rate",
+        "entry-123_electricity_next_import_rate": "sensor.eon_electricity_next_import_rate",
+    }
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_preserves_customized_electricity_entity_id_during_migration(
+    init_module, integration_stubs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = integration_stubs
+    registry.entries = {
+        "entry-123_current_import_rate": "sensor.my_custom_import_rate",
+    }
+
+    class _Client:
+        def __init__(
+            self, session, *, email: str, password: str, account_number: str
+        ) -> None:
+            return None
+
+    class _Coordinator:
+        def __init__(self, hass, client) -> None:
+            return None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            return None
+
+    monkeypatch.setattr(init_module, "EonNextRatesClient", _Client)
+    monkeypatch.setattr(init_module, "EonNextRatesCoordinator", _Coordinator)
+
+    hass = init_module.HomeAssistant()
+    entry = init_module.ConfigEntry(
+        entry_id="entry-123",
+        data={
+            "username": "user@example.com",
+            "password": "secret",
+            "account_number": "A-TEST0001",
+        },
+    )
+
+    result = await init_module.async_setup_entry(hass, entry)
+
+    assert result is True
+    assert registry.update_calls == [
+        (
+            "sensor.my_custom_import_rate",
+            "entry-123_electricity_current_import_rate",
+            "sensor.my_custom_import_rate",
+        )
+    ]
+    assert registry.entries == {
+        "entry-123_electricity_current_import_rate": "sensor.my_custom_import_rate",
+    }
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_skips_missing_legacy_electricity_entities(
+    init_module, integration_stubs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = integration_stubs
+    registry.entries = {}
+
+    class _Client:
+        def __init__(
+            self, session, *, email: str, password: str, account_number: str
+        ) -> None:
+            return None
+
+    class _Coordinator:
+        def __init__(self, hass, client) -> None:
+            return None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            return None
+
+    monkeypatch.setattr(init_module, "EonNextRatesClient", _Client)
+    monkeypatch.setattr(init_module, "EonNextRatesCoordinator", _Coordinator)
+
+    hass = init_module.HomeAssistant()
+    entry = init_module.ConfigEntry(
+        entry_id="entry-123",
+        data={
+            "username": "user@example.com",
+            "password": "secret",
+            "account_number": "A-TEST0001",
+        },
+    )
+
+    result = await init_module.async_setup_entry(hass, entry)
+
+    assert result is True
+    assert registry.update_calls == []
+    assert registry.entries == {}
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_skips_when_new_electricity_unique_id_already_exists(
+    init_module, integration_stubs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = integration_stubs
+    registry.entries = {
+        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
+        "entry-123_electricity_current_import_rate": "sensor.eon_electricity_current_import_rate",
+    }
+
+    class _Client:
+        def __init__(
+            self, session, *, email: str, password: str, account_number: str
+        ) -> None:
+            return None
+
+    class _Coordinator:
+        def __init__(self, hass, client) -> None:
+            return None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            return None
+
+    monkeypatch.setattr(init_module, "EonNextRatesClient", _Client)
+    monkeypatch.setattr(init_module, "EonNextRatesCoordinator", _Coordinator)
+
+    hass = init_module.HomeAssistant()
+    entry = init_module.ConfigEntry(
+        entry_id="entry-123",
+        data={
+            "username": "user@example.com",
+            "password": "secret",
+            "account_number": "A-TEST0001",
+        },
+    )
+
+    result = await init_module.async_setup_entry(hass, entry)
+
+    assert result is True
+    assert registry.update_calls == []
+    assert registry.entries == {
+        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
+        "entry-123_electricity_current_import_rate": "sensor.eon_electricity_current_import_rate",
+    }
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_skips_when_new_electricity_entity_id_already_exists(
+    init_module, integration_stubs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = integration_stubs
+    registry.entries = {
+        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
+        "some_other_unique_id": "sensor.eon_electricity_current_import_rate",
+    }
+
+    class _Client:
+        def __init__(
+            self, session, *, email: str, password: str, account_number: str
+        ) -> None:
+            return None
+
+    class _Coordinator:
+        def __init__(self, hass, client) -> None:
+            return None
+
+        async def async_config_entry_first_refresh(self) -> None:
+            return None
+
+    monkeypatch.setattr(init_module, "EonNextRatesClient", _Client)
+    monkeypatch.setattr(init_module, "EonNextRatesCoordinator", _Coordinator)
+
+    hass = init_module.HomeAssistant()
+    entry = init_module.ConfigEntry(
+        entry_id="entry-123",
+        data={
+            "username": "user@example.com",
+            "password": "secret",
+            "account_number": "A-TEST0001",
+        },
+    )
+
+    result = await init_module.async_setup_entry(hass, entry)
+
+    assert result is True
+    assert registry.update_calls == []
+    assert registry.entries == {
+        "entry-123_current_import_rate": "sensor.eon_current_import_rate",
+        "some_other_unique_id": "sensor.eon_electricity_current_import_rate",
+    }
 
 
 @pytest.mark.asyncio
