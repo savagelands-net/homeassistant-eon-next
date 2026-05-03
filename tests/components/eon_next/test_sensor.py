@@ -11,7 +11,6 @@ import pytest
 from custom_components.eon_next.api import (
     AccountSnapshot,
     SmartFlexChargingSessionSnapshot,
-    SmartFlexCompletedDispatchSnapshot,
     SmartFlexDeviceSnapshot,
     SmartFlexPlannedDispatchSnapshot,
     SmartFlexReadingSnapshot,
@@ -60,8 +59,36 @@ def homeassistant_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
 
     core.HomeAssistant = HomeAssistant
 
+    helpers = types.ModuleType("homeassistant.helpers")
+
     entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
     entity_platform.AddEntitiesCallback = object
+
+    entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
+
+    class _EntityRegistry:
+        def __init__(self) -> None:
+            self.entries: dict[tuple[str, str, str], str] = {}
+            self.removed: list[str] = []
+
+        def async_get_entity_id(self, domain, platform, unique_id):
+            return self.entries.get((domain, platform, unique_id))
+
+        def async_remove(self, entity_id):
+            self.removed.append(entity_id)
+            for key, value in list(self.entries.items()):
+                if value == entity_id:
+                    del self.entries[key]
+
+    def async_get(hass):
+        registry = getattr(hass, "_entity_registry", None)
+        if registry is None:
+            registry = _EntityRegistry()
+            hass._entity_registry = registry
+        return registry
+
+    entity_registry.async_get = async_get
+    helpers.entity_registry = entity_registry
 
     sensor = types.ModuleType("homeassistant.components.sensor")
 
@@ -139,8 +166,10 @@ def homeassistant_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         "homeassistant.config_entries": config_entries,
         "homeassistant.const": const,
         "homeassistant.core": core,
+        "homeassistant.helpers": helpers,
         "homeassistant.components.sensor": sensor,
         "homeassistant.helpers.entity_platform": entity_platform,
+        "homeassistant.helpers.entity_registry": entity_registry,
         "homeassistant.helpers.update_coordinator": update_coordinator,
     }
     for name, module in modules.items():
@@ -338,16 +367,6 @@ def _build_smartflex_device_snapshot(
     )
 
 
-def _build_completed_dispatch_snapshot() -> SmartFlexCompletedDispatchSnapshot:
-    return SmartFlexCompletedDispatchSnapshot(
-        start=datetime(2026, 5, 1, 18, 0, tzinfo=UTC),
-        end=datetime(2026, 5, 1, 18, 30, tzinfo=UTC),
-        delta=4.8,
-        source="SMARTFLEX",
-        location="HOME",
-    )
-
-
 @pytest.mark.asyncio
 async def test_async_setup_entry_uses_stored_coordinator(sensor_module, snapshot) -> None:
     hass = sensor_module.HomeAssistant()
@@ -364,6 +383,46 @@ async def test_async_setup_entry_uses_stored_coordinator(sensor_module, snapshot
 
     assert len(added_entities) == 30
     assert added_entities[0].coordinator is coordinator
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_removes_legacy_completed_dispatch_registry_entries(
+    sensor_module, snapshot
+) -> None:
+    hass = sensor_module.HomeAssistant()
+    coordinator = _DummyCoordinator(snapshot)
+    hass.data = {DOMAIN: {"entry-123": {"coordinator": coordinator}}}
+    registry = sensor_module.entity_registry.async_get(hass)
+    registry.entries = {
+        (
+            "sensor",
+            DOMAIN,
+            "entry-123_smartflex_latest_completed_dispatch_start",
+        ): "sensor.eon_latest_completed_dispatch_start",
+        (
+            "sensor",
+            DOMAIN,
+            "entry-123_smartflex_latest_completed_dispatch_end",
+        ): "sensor.eon_latest_completed_dispatch_end",
+        (
+            "sensor",
+            DOMAIN,
+            "entry-123_smartflex_latest_completed_dispatch_delta",
+        ): "sensor.eon_latest_completed_dispatch_delta",
+        ("sensor", DOMAIN, "entry-123_account_number"): "sensor.eon_account_number",
+    }
+    entry = sensor_module.ConfigEntry(entry_id="entry-123")
+
+    await sensor_module.async_setup_entry(hass, entry, lambda entities: None)
+
+    assert registry.removed == [
+        "sensor.eon_latest_completed_dispatch_start",
+        "sensor.eon_latest_completed_dispatch_end",
+        "sensor.eon_latest_completed_dispatch_delta",
+    ]
+    assert registry.async_get_entity_id(
+        "sensor", DOMAIN, "entry-123_account_number"
+    ) == "sensor.eon_account_number"
 
 
 @pytest.mark.asyncio
@@ -386,13 +445,12 @@ async def test_async_setup_entry_adds_smartflex_entities_when_data_arrives_later
         replace(
             snapshot,
             smartflex_devices=(_build_smartflex_device_snapshot(),),
-            latest_completed_dispatch=_build_completed_dispatch_snapshot(),
         )
     )
 
     assert len(added_batches) == 2
     assert len(added_batches[0]) == 30
-    assert len(added_batches[1]) == 13
+    assert len(added_batches[1]) == 10
     assert {
         entity.unique_id for entity in added_batches[1]
     } == {
@@ -406,9 +464,6 @@ async def test_async_setup_entry_adds_smartflex_entities_when_data_arrives_later
         "entry-123_smartflex_charger-001_latest_charging_session_cost",
         "entry-123_smartflex_charger-001_next_planned_dispatch_start",
         "entry-123_smartflex_charger-001_next_planned_dispatch_energy_added",
-        "entry-123_smartflex_latest_completed_dispatch_start",
-        "entry-123_smartflex_latest_completed_dispatch_end",
-        "entry-123_smartflex_latest_completed_dispatch_delta",
     }
 
 
@@ -447,7 +502,6 @@ async def test_async_setup_entry_does_not_add_duplicate_smartflex_entities_on_re
     smartflex_snapshot = replace(
         snapshot,
         smartflex_devices=(_build_smartflex_device_snapshot(),),
-        latest_completed_dispatch=_build_completed_dispatch_snapshot(),
     )
 
     await sensor_module.async_setup_entry(
@@ -461,7 +515,7 @@ async def test_async_setup_entry_does_not_add_duplicate_smartflex_entities_on_re
 
     assert len(added_batches) == 2
     assert len(added_batches[0]) == 30
-    assert len(added_batches[1]) == 13
+    assert len(added_batches[1]) == 10
 
 
 def test_electricity_current_rate_sensor_exposes_value_unit_and_attributes(
@@ -828,7 +882,7 @@ def test_optional_statement_breakdown_sensors_return_none_when_data_is_absent(
     assert _entity_by_suffix(entities, "latest_gas_statement_quantity").native_value is None
 
 
-def test_build_sensors_adds_smartflex_entities_for_each_device(
+def test_build_sensors_adds_smartflex_entities_only_for_real_device_fields(
     sensor_module, snapshot
 ) -> None:
     smartflex_snapshot = replace(
@@ -845,7 +899,6 @@ def test_build_sensors_adds_smartflex_entities_for_each_device(
                 charge_point_power_output_kw=None,
             ),
         ),
-        latest_completed_dispatch=_build_completed_dispatch_snapshot(),
     )
 
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(smartflex_snapshot))
@@ -855,9 +908,6 @@ def test_build_sensors_adds_smartflex_entities_for_each_device(
     assert _entity_by_suffix(
         entities, "smartflex_vehicle-002_current_state"
     ).name == "E.ON Family EV Current State"
-    assert _entity_by_suffix(
-        entities, "smartflex_latest_completed_dispatch_delta"
-    ).name == "E.ON Latest SmartFlex Completed Dispatch Delta"
     assert _entity_by_suffix(entities, "smartflex_vehicle-002_battery_size").native_value == 77.4
     assert not any(
         entity.unique_id == "entry-123_smartflex_vehicle-002_charge_point_power_output"
@@ -868,6 +918,10 @@ def test_build_sensors_adds_smartflex_entities_for_each_device(
     ).native_value == 7.4
     assert not any(
         entity.unique_id == "entry-123_smartflex_charger-001_battery_size"
+        for entity in entities
+    )
+    assert not any(
+        entity.unique_id.startswith("entry-123_smartflex_latest_completed_dispatch_")
         for entity in entities
     )
 
@@ -1001,35 +1055,7 @@ def test_smartflex_device_sensors_expose_expected_values_and_attributes(
     }
 
 
-def test_account_level_completed_dispatch_sensors_expose_expected_values(
-    sensor_module, snapshot
-) -> None:
-    smartflex_snapshot = replace(
-        snapshot,
-        latest_completed_dispatch=_build_completed_dispatch_snapshot(),
-    )
-
-    entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(smartflex_snapshot))
-
-    start_sensor = _entity_by_suffix(
-        entities, "smartflex_latest_completed_dispatch_start"
-    )
-    end_sensor = _entity_by_suffix(entities, "smartflex_latest_completed_dispatch_end")
-    delta_sensor = _entity_by_suffix(
-        entities, "smartflex_latest_completed_dispatch_delta"
-    )
-
-    assert start_sensor.native_value == datetime(2026, 5, 1, 18, 0, tzinfo=UTC)
-    assert end_sensor.native_value == datetime(2026, 5, 1, 18, 30, tzinfo=UTC)
-    assert delta_sensor.native_value == 4.8
-    assert delta_sensor.native_unit_of_measurement == "kWh"
-    assert delta_sensor.extra_state_attributes == {
-        "smartflex_completed_dispatch_source": "SMARTFLEX",
-        "smartflex_completed_dispatch_location": "HOME",
-    }
-
-
-def test_smartflex_sensors_return_none_for_missing_optional_surfaces(
+def test_missing_optional_smartflex_fields_do_not_create_entities(
     sensor_module, snapshot
 ) -> None:
     smartflex_snapshot = replace(
@@ -1044,13 +1070,6 @@ def test_smartflex_sensors_return_none_for_missing_optional_surfaces(
                 latest_charging_session=None,
                 next_planned_dispatch=None,
             ),
-        ),
-        latest_completed_dispatch=SmartFlexCompletedDispatchSnapshot(
-            start=datetime(2026, 5, 1, 18, 0, tzinfo=UTC),
-            end=datetime(2026, 5, 1, 18, 30, tzinfo=UTC),
-            delta=None,
-            source=None,
-            location=None,
         ),
     )
 
@@ -1067,17 +1086,39 @@ def test_smartflex_sensors_return_none_for_missing_optional_surfaces(
         "entry-123_smartflex_charger-001_latest_charging_session_cost",
         "entry-123_smartflex_charger-001_next_planned_dispatch_start",
         "entry-123_smartflex_charger-001_next_planned_dispatch_energy_added",
-        "entry-123_smartflex_latest_completed_dispatch_delta",
     }
-    existing_unique_ids = {entity.unique_id for entity in entities}
+    existing_unique_ids = {
+        entity.unique_id
+        for entity in entities
+        if entity.unique_id.startswith("entry-123_smartflex_")
+    }
 
     assert missing_unique_ids.isdisjoint(existing_unique_ids)
-    assert _entity_by_suffix(
-        entities, "smartflex_latest_completed_dispatch_start"
-    ).native_value == datetime(2026, 5, 1, 18, 0, tzinfo=UTC)
-    assert _entity_by_suffix(
-        entities, "smartflex_latest_completed_dispatch_end"
-    ).native_value == datetime(2026, 5, 1, 18, 30, tzinfo=UTC)
+    assert existing_unique_ids == {"entry-123_smartflex_charger-001_current_state"}
+
+
+def test_latest_completed_dispatch_data_does_not_create_sensors(
+    sensor_module, snapshot
+) -> None:
+    smartflex_snapshot = types.SimpleNamespace(
+        smartflex_devices=(_build_smartflex_device_snapshot(),),
+        latest_completed_dispatch={
+            "start": datetime(2026, 5, 1, 18, 0, tzinfo=UTC),
+            "end": datetime(2026, 5, 1, 18, 30, tzinfo=UTC),
+            "delta": 4.8,
+            "source": "SMARTFLEX",
+            "location": "HOME",
+        },
+    )
+
+    entities = sensor_module._build_smartflex_sensors(
+        "entry-123", _DummyCoordinator(smartflex_snapshot)
+    )
+
+    assert not any(
+        entity.unique_id.startswith("entry-123_smartflex_latest_completed_dispatch_")
+        for entity in entities
+    )
 
 
 def test_smartflex_unique_ids_preserve_distinct_raw_device_ids(

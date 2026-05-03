@@ -265,20 +265,6 @@ SMARTFLEX_PLANNED_DISPATCHES_QUERY = (
 }"""
 )
 
-SMARTFLEX_COMPLETED_DISPATCHES_QUERY = (
-    """query SmartFlexCompletedDispatches($accountNumber: String!) {
-  completedDispatches(accountNumber: $accountNumber) {
-    start
-    end
-    delta
-    meta {
-      source
-      location
-    }
-  }
-}"""
-)
-
 
 @dataclass(frozen=True, slots=True)
 class AccountSnapshot:
@@ -338,7 +324,6 @@ class AccountSnapshot:
     latest_gas_meter_reading_register_is_quarantined: bool | None = None
     gas_meter_point_mprn: str | None = None
     smartflex_devices: tuple[SmartFlexDeviceSnapshot, ...] = ()
-    latest_completed_dispatch: SmartFlexCompletedDispatchSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,15 +345,6 @@ class SmartFlexPlannedDispatchSnapshot:
     end: datetime | None
     dispatch_type: str | None
     energy_added_kwh: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class SmartFlexCompletedDispatchSnapshot:
-    start: datetime
-    end: datetime
-    delta: float | None
-    source: str | None
-    location: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -635,13 +611,9 @@ class EonNextRatesClient:
         agreement = select_active_half_hourly_agreement(account, now)
         snapshot = build_account_snapshot(account, agreement, now)
         smartflex_devices = await self._async_get_smartflex_devices(self._account_number)
-        latest_completed_dispatch = await self._async_get_latest_completed_dispatch(
-            self._account_number
-        )
         return replace(
             snapshot,
             smartflex_devices=smartflex_devices,
-            latest_completed_dispatch=latest_completed_dispatch,
         )
 
     async def _async_get_smartflex_devices(
@@ -686,20 +658,6 @@ class EonNextRatesClient:
             )
 
         return tuple(snapshots)
-
-    async def _async_get_latest_completed_dispatch(
-        self, account_number: str
-    ) -> SmartFlexCompletedDispatchSnapshot | None:
-        data = await self._async_optional_authenticated_graphql(
-            SMARTFLEX_COMPLETED_DISPATCHES_QUERY,
-            {"accountNumber": account_number},
-        )
-        completed_dispatches = (
-            _normalize_completed_dispatches(data.get("completedDispatches"))
-            if isinstance(data, dict)
-            else []
-        )
-        return select_latest_completed_dispatch(completed_dispatches)
 
     def _store_token_state(self, token_payload: dict[str, Any]) -> None:
         self._token = token_payload["token"]
@@ -879,29 +837,6 @@ def _normalize_smartflex_planned_dispatches(planned_dispatches: Any) -> list[dic
     ]
 
 
-def _normalize_completed_dispatches(completed_dispatches: Any) -> list[dict[str, Any]]:
-    if not isinstance(completed_dispatches, list):
-        return []
-
-    normalized_dispatches = []
-    for dispatch in completed_dispatches:
-        if not isinstance(dispatch, dict):
-            continue
-
-        meta = dispatch.get("meta")
-        normalized_dispatches.append(
-            {
-                "start": dispatch.get("start"),
-                "end": dispatch.get("end"),
-                "delta": dispatch.get("delta"),
-                "source": meta.get("source") if isinstance(meta, dict) else None,
-                "location": meta.get("location") if isinstance(meta, dict) else None,
-            }
-        )
-
-    return normalized_dispatches
-
-
 def _build_smartflex_reading_snapshot(reading: Any) -> SmartFlexReadingSnapshot | None:
     if not isinstance(reading, dict):
         return None
@@ -968,38 +903,6 @@ def select_next_planned_dispatch(
         return None
 
     return min(snapshots, key=lambda snapshot: snapshot.start)
-
-
-def select_latest_completed_dispatch(
-    completed_dispatches: Any,
-) -> SmartFlexCompletedDispatchSnapshot | None:
-    if not isinstance(completed_dispatches, list):
-        return None
-
-    snapshots = []
-    for dispatch in completed_dispatches:
-        if not isinstance(dispatch, dict):
-            continue
-
-        start = _parse_smartflex_datetime(dispatch.get("start"))
-        end = _parse_smartflex_datetime(dispatch.get("end"))
-        if start is None or end is None:
-            continue
-
-        snapshots.append(
-            SmartFlexCompletedDispatchSnapshot(
-                start=start,
-                end=end,
-                delta=_parse_float(dispatch.get("delta")),
-                source=dispatch.get("source"),
-                location=dispatch.get("location"),
-            )
-        )
-
-    if not snapshots:
-        return None
-
-    return max(snapshots, key=lambda snapshot: snapshot.end)
 
 
 def build_smartflex_device_snapshot(
