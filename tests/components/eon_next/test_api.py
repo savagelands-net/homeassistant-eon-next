@@ -11,6 +11,7 @@ from custom_components.eon_next.api import (
     AGREEMENTS_QUERY,
     LOGIN_MUTATION,
     REFRESH_MUTATION,
+    SMARTFLEX_DEVICES_QUERY,
     VIEWER_QUERY,
     AccountSnapshot,
     EonNextRatesAuthError,
@@ -601,6 +602,22 @@ def test_agreements_query_uses_charge_only_statement_fields_in_charge_fragment()
     )
     assert re.search(r"\n\s*usageCost\s*:", top_level_node_block) is None
     assert re.search(r"\n\s*supplyCharge\s*:", top_level_node_block) is None
+
+
+def test_smartflex_devices_query_uses_status_inline_fragments() -> None:
+    device_block = SMARTFLEX_DEVICES_QUERY.split("devices(accountNumber: $accountNumber) {", 1)[1]
+    status_block = device_block.split("status {", 1)[1].split("... on SmartFlexVehicle {", 1)[0]
+    top_level_status_block = status_block.split("... on SmartFlexVehicleStatus {", 1)[0]
+
+    assert "current" in top_level_status_block
+    assert "isSuspended" in top_level_status_block
+    assert "currentState" in top_level_status_block
+    assert "stateOfCharge" not in top_level_status_block
+    assert "activePower" not in top_level_status_block
+    assert "stateOfChargeLimit" not in top_level_status_block
+    assert "testDispatchFailureReason" not in top_level_status_block
+    assert "... on SmartFlexVehicleStatus {" in status_block
+    assert "... on SmartFlexChargePointStatus {" in status_block
 
 
 def test_build_account_snapshot_parses_live_shaped_statement_transactions() -> None:

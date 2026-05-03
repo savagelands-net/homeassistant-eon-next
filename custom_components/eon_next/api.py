@@ -172,20 +172,38 @@ SMARTFLEX_DEVICES_QUERY = """query SmartFlexDevices($accountNumber: String!) {
       current
       isSuspended
       currentState
-      stateOfCharge {
-        timestamp
-        value
+      ... on SmartFlexVehicleStatus {
+        stateOfCharge {
+          timestamp
+          value
+        }
+        activePower {
+          timestamp
+          value
+        }
+        stateOfChargeLimit {
+          upperSocLimit
+          timestamp
+          isLimitViolated
+        }
+        testDispatchFailureReason
       }
-      activePower {
-        timestamp
-        value
+      ... on SmartFlexChargePointStatus {
+        stateOfCharge {
+          timestamp
+          value
+        }
+        activePower {
+          timestamp
+          value
+        }
+        stateOfChargeLimit {
+          upperSocLimit
+          timestamp
+          isLimitViolated
+        }
+        testDispatchFailureReason
       }
-      stateOfChargeLimit {
-        upperSocLimit
-        timestamp
-        isLimitViolated
-      }
-      testDispatchFailureReason
     }
     ... on SmartFlexVehicle {
       make

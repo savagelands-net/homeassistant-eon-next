@@ -392,14 +392,13 @@ async def test_async_setup_entry_adds_smartflex_entities_when_data_arrives_later
 
     assert len(added_batches) == 2
     assert len(added_batches[0]) == 30
-    assert len(added_batches[1]) == 14
+    assert len(added_batches[1]) == 13
     assert {
         entity.unique_id for entity in added_batches[1]
     } == {
         "entry-123_smartflex_charger-001_current_state",
         "entry-123_smartflex_charger-001_state_of_charge",
         "entry-123_smartflex_charger-001_active_power",
-        "entry-123_smartflex_charger-001_battery_size",
         "entry-123_smartflex_charger-001_charge_point_power_output",
         "entry-123_smartflex_charger-001_latest_charging_session_start",
         "entry-123_smartflex_charger-001_latest_charging_session_end",
@@ -462,7 +461,7 @@ async def test_async_setup_entry_does_not_add_duplicate_smartflex_entities_on_re
 
     assert len(added_batches) == 2
     assert len(added_batches[0]) == 30
-    assert len(added_batches[1]) == 14
+    assert len(added_batches[1]) == 13
 
 
 def test_electricity_current_rate_sensor_exposes_value_unit_and_attributes(
@@ -850,8 +849,6 @@ def test_build_sensors_adds_smartflex_entities_for_each_device(
     )
 
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(smartflex_snapshot))
-
-    assert len(entities) == 55
     assert _entity_by_suffix(
         entities, "smartflex_charger-001_current_state"
     ).name == "E.ON Driveway Charger Current State"
@@ -861,6 +858,18 @@ def test_build_sensors_adds_smartflex_entities_for_each_device(
     assert _entity_by_suffix(
         entities, "smartflex_latest_completed_dispatch_delta"
     ).name == "E.ON Latest SmartFlex Completed Dispatch Delta"
+    assert _entity_by_suffix(entities, "smartflex_vehicle-002_battery_size").native_value == 77.4
+    assert not any(
+        entity.unique_id == "entry-123_smartflex_vehicle-002_charge_point_power_output"
+        for entity in entities
+    )
+    assert _entity_by_suffix(
+        entities, "smartflex_charger-001_charge_point_power_output"
+    ).native_value == 7.4
+    assert not any(
+        entity.unique_id == "entry-123_smartflex_charger-001_battery_size"
+        for entity in entities
+    )
 
 
 def test_smartflex_device_sensors_expose_expected_values_and_attributes(
@@ -878,7 +887,6 @@ def test_smartflex_device_sensors_expose_expected_values_and_attributes(
     current_state_sensor = _entity_by_suffix(entities, "smartflex_charger-001_current_state")
     state_of_charge_sensor = _entity_by_suffix(entities, "smartflex_charger-001_state_of_charge")
     active_power_sensor = _entity_by_suffix(entities, "smartflex_charger-001_active_power")
-    battery_size_sensor = _entity_by_suffix(entities, "smartflex_charger-001_battery_size")
     charge_point_power_output_sensor = _entity_by_suffix(
         entities, "smartflex_charger-001_charge_point_power_output"
     )
@@ -933,8 +941,10 @@ def test_smartflex_device_sensors_expose_expected_values_and_attributes(
         "smartflex_reading_timestamp": datetime(2026, 5, 1, 20, 10, tzinfo=UTC)
     }
 
-    assert battery_size_sensor.native_value is None
-    assert battery_size_sensor.native_unit_of_measurement == "kWh"
+    assert not any(
+        entity.unique_id == "entry-123_smartflex_charger-001_battery_size"
+        for entity in entities
+    )
     assert charge_point_power_output_sensor.native_value == 7.4
     assert charge_point_power_output_sensor.native_unit_of_measurement == "kW"
 
@@ -1046,97 +1056,28 @@ def test_smartflex_sensors_return_none_for_missing_optional_surfaces(
 
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(smartflex_snapshot))
 
-    state_of_charge_sensor = _entity_by_suffix(
-        entities, "smartflex_charger-001_state_of_charge"
-    )
-    active_power_sensor = _entity_by_suffix(entities, "smartflex_charger-001_active_power")
+    missing_unique_ids = {
+        "entry-123_smartflex_charger-001_state_of_charge",
+        "entry-123_smartflex_charger-001_active_power",
+        "entry-123_smartflex_charger-001_battery_size",
+        "entry-123_smartflex_charger-001_charge_point_power_output",
+        "entry-123_smartflex_charger-001_latest_charging_session_start",
+        "entry-123_smartflex_charger-001_latest_charging_session_end",
+        "entry-123_smartflex_charger-001_latest_charging_session_energy_added",
+        "entry-123_smartflex_charger-001_latest_charging_session_cost",
+        "entry-123_smartflex_charger-001_next_planned_dispatch_start",
+        "entry-123_smartflex_charger-001_next_planned_dispatch_energy_added",
+        "entry-123_smartflex_latest_completed_dispatch_delta",
+    }
+    existing_unique_ids = {entity.unique_id for entity in entities}
 
-    assert state_of_charge_sensor.native_value is None
-    assert state_of_charge_sensor.extra_state_attributes == {
-        "smartflex_reading_timestamp": None,
-        "smartflex_upper_soc_limit": None,
-        "smartflex_soc_limit_timestamp": None,
-        "smartflex_is_soc_limit_violated": None,
-    }
-    assert active_power_sensor.native_value is None
-    assert active_power_sensor.extra_state_attributes == {"smartflex_reading_timestamp": None}
-    assert _entity_by_suffix(entities, "smartflex_charger-001_battery_size").native_value is None
-    assert (
-        _entity_by_suffix(
-            entities, "smartflex_charger-001_charge_point_power_output"
-        ).native_value
-        is None
-    )
-    assert (
-        _entity_by_suffix(
-            entities, "smartflex_charger-001_latest_charging_session_start"
-        ).native_value
-        is None
-    )
-    assert (
-        _entity_by_suffix(
-            entities, "smartflex_charger-001_latest_charging_session_end"
-        ).native_value
-        is None
-    )
-    assert (
-        _entity_by_suffix(
-            entities, "smartflex_charger-001_latest_charging_session_energy_added"
-        ).native_value
-        is None
-    )
+    assert missing_unique_ids.isdisjoint(existing_unique_ids)
     assert _entity_by_suffix(
-        entities, "smartflex_charger-001_latest_charging_session_energy_added"
-    ).extra_state_attributes == {
-        "smartflex_latest_charging_session_start": None,
-        "smartflex_latest_charging_session_end": None,
-        "smartflex_latest_charging_session_soc_delta": None,
-        "smartflex_latest_charging_session_soc_final": None,
-    }
-    assert (
-        _entity_by_suffix(
-            entities, "smartflex_charger-001_latest_charging_session_cost"
-        ).native_value
-        is None
-    )
+        entities, "smartflex_latest_completed_dispatch_start"
+    ).native_value == datetime(2026, 5, 1, 18, 0, tzinfo=UTC)
     assert _entity_by_suffix(
-        entities, "smartflex_charger-001_latest_charging_session_cost"
-    ).native_unit_of_measurement is None
-    assert (
-        _entity_by_suffix(
-            entities, "smartflex_charger-001_next_planned_dispatch_start"
-        ).native_value
-        is None
-    )
-    assert _entity_by_suffix(
-        entities, "smartflex_charger-001_next_planned_dispatch_start"
-    ).extra_state_attributes == {
-        "smartflex_next_planned_dispatch_end": None,
-        "smartflex_next_planned_dispatch_type": None,
-    }
-    assert (
-        _entity_by_suffix(
-            entities, "smartflex_charger-001_next_planned_dispatch_energy_added"
-        ).native_value
-        is None
-    )
-    assert _entity_by_suffix(
-        entities, "smartflex_charger-001_next_planned_dispatch_energy_added"
-    ).extra_state_attributes == {
-        "smartflex_next_planned_dispatch_start": None,
-        "smartflex_next_planned_dispatch_end": None,
-        "smartflex_next_planned_dispatch_type": None,
-    }
-    assert (
-        _entity_by_suffix(entities, "smartflex_latest_completed_dispatch_delta").native_value
-        is None
-    )
-    assert _entity_by_suffix(
-        entities, "smartflex_latest_completed_dispatch_delta"
-    ).extra_state_attributes == {
-        "smartflex_completed_dispatch_source": None,
-        "smartflex_completed_dispatch_location": None,
-    }
+        entities, "smartflex_latest_completed_dispatch_end"
+    ).native_value == datetime(2026, 5, 1, 18, 30, tzinfo=UTC)
 
 
 def test_smartflex_unique_ids_preserve_distinct_raw_device_ids(

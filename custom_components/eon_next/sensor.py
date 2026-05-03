@@ -627,12 +627,14 @@ def _build_smartflex_sensors(
         sensors.extend(
             SmartFlexDeviceSensor(entry_id, coordinator, device.device_id, description)
             for description in SMARTFLEX_DEVICE_SENSOR_DESCRIPTIONS
+            if _resolve_path(device, description.value_path) is not None
         )
 
     if snapshot.latest_completed_dispatch is not None:
         sensors.extend(
             SmartFlexAccountSensor(entry_id, coordinator, description)
             for description in SMARTFLEX_ACCOUNT_SENSOR_DESCRIPTIONS
+            if _resolve_path(snapshot, description.value_path) is not None
         )
 
     return sensors
