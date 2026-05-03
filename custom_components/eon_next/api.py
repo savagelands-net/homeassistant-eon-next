@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -159,6 +159,108 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
   }
 }"""
 
+SMARTFLEX_DEVICES_QUERY = """query SmartFlexDevices($accountNumber: String!) {
+  devices(accountNumber: $accountNumber) {
+    __typename
+    deviceType
+    id
+    name
+    provider
+    integrationDeviceId
+    propertyId
+    status {
+      current
+      isSuspended
+      currentState
+      stateOfCharge {
+        timestamp
+        value
+      }
+      activePower {
+        timestamp
+        value
+      }
+      stateOfChargeLimit {
+        upperSocLimit
+        timestamp
+        isLimitViolated
+      }
+      testDispatchFailureReason
+    }
+    ... on SmartFlexVehicle {
+      make
+      model
+      vehicleBatterySize
+      chargingSessions(last: 1) {
+        edges {
+          node {
+            start
+            end
+            stateOfChargeChange
+            stateOfChargeFinal
+            energyAdded {
+              value
+              unit
+            }
+            cost {
+              amount
+              currency
+            }
+          }
+        }
+      }
+    }
+    ... on SmartFlexChargePoint {
+      make
+      model
+      chargePointPowerOutput
+      chargingSessions(last: 1) {
+        edges {
+          node {
+            start
+            end
+            stateOfChargeChange
+            stateOfChargeFinal
+            energyAdded {
+              value
+              unit
+            }
+            cost {
+              amount
+              currency
+            }
+          }
+        }
+      }
+    }
+  }
+}"""
+
+SMARTFLEX_PLANNED_DISPATCHES_QUERY = (
+    """query SmartFlexPlannedDispatches($deviceId: String!) {
+  flexPlannedDispatches(deviceId: $deviceId) {
+    start
+    end
+    type
+    energyAddedKwh
+  }
+}"""
+)
+
+SMARTFLEX_COMPLETED_DISPATCHES_QUERY = (
+    """query SmartFlexCompletedDispatches($accountNumber: String!) {
+  completedDispatches(accountNumber: $accountNumber) {
+    start
+    end
+    delta
+    meta {
+      source
+      location
+    }
+  }
+}"""
+)
+
 
 @dataclass(frozen=True, slots=True)
 class AccountSnapshot:
@@ -217,6 +319,73 @@ class AccountSnapshot:
     latest_gas_meter_reading_register_digits: int | None = None
     latest_gas_meter_reading_register_is_quarantined: bool | None = None
     gas_meter_point_mprn: str | None = None
+    smartflex_devices: tuple[SmartFlexDeviceSnapshot, ...] = ()
+    latest_completed_dispatch: SmartFlexCompletedDispatchSnapshot | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SmartFlexReadingSnapshot:
+    timestamp: datetime
+    value: float
+
+
+@dataclass(frozen=True, slots=True)
+class SmartFlexSocLimitSnapshot:
+    upper_soc_limit: float
+    timestamp: datetime
+    is_limit_violated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SmartFlexPlannedDispatchSnapshot:
+    start: datetime
+    end: datetime | None
+    dispatch_type: str | None
+    energy_added_kwh: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class SmartFlexCompletedDispatchSnapshot:
+    start: datetime
+    end: datetime
+    delta: float | None
+    source: str | None
+    location: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SmartFlexChargingSessionSnapshot:
+    start: datetime
+    end: datetime | None
+    state_of_charge_change: float | None
+    state_of_charge_final: float | None
+    energy_added_value: float | None
+    energy_added_unit: str | None
+    cost_amount: float | None
+    cost_currency: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SmartFlexDeviceSnapshot:
+    device_id: str
+    name: str | None
+    device_type: str | None
+    provider: str | None
+    integration_device_id: str | None
+    property_id: str | None
+    make: str | None
+    model: str | None
+    vehicle_battery_size_kwh: float | None
+    charge_point_power_output_kw: float | None
+    lifecycle_status: str | None
+    current_state: str | None
+    is_suspended: bool | None
+    state_of_charge: SmartFlexReadingSnapshot | None
+    active_power: SmartFlexReadingSnapshot | None
+    state_of_charge_limit: SmartFlexSocLimitSnapshot | None
+    test_dispatch_failure_reason: str | None
+    latest_charging_session: SmartFlexChargingSessionSnapshot | None
+    next_planned_dispatch: SmartFlexPlannedDispatchSnapshot | None
 
 
 class EonNextRatesError(Exception):
@@ -387,6 +556,14 @@ class EonNextRatesClient:
         token = await self._async_access_token()
         return await self._graphql(query, variables, token=token)
 
+    async def _async_optional_authenticated_graphql(
+        self, query: str, variables: dict | None = None
+    ) -> dict | None:
+        try:
+            return await self._async_authenticated_graphql(query, variables)
+        except EonNextRatesError:
+            return None
+
     async def async_discover_account_number(self) -> str:
         token = await self._async_access_token()
 
@@ -438,7 +615,73 @@ class EonNextRatesClient:
         )
         account = data["account"]
         agreement = select_active_half_hourly_agreement(account, now)
-        return build_account_snapshot(account, agreement, now)
+        snapshot = build_account_snapshot(account, agreement, now)
+        smartflex_devices = await self._async_get_smartflex_devices(self._account_number)
+        latest_completed_dispatch = await self._async_get_latest_completed_dispatch(
+            self._account_number
+        )
+        return replace(
+            snapshot,
+            smartflex_devices=smartflex_devices,
+            latest_completed_dispatch=latest_completed_dispatch,
+        )
+
+    async def _async_get_smartflex_devices(
+        self, account_number: str
+    ) -> tuple[SmartFlexDeviceSnapshot, ...]:
+        data = await self._async_optional_authenticated_graphql(
+            SMARTFLEX_DEVICES_QUERY,
+            {"accountNumber": account_number},
+        )
+        devices = data.get("devices") if isinstance(data, dict) else None
+        if not isinstance(devices, list):
+            return ()
+
+        snapshots: list[SmartFlexDeviceSnapshot] = []
+        for raw_device in devices:
+            normalized_device = _normalize_smartflex_device(raw_device)
+            if normalized_device is None:
+                continue
+
+            planned_data = await self._async_optional_authenticated_graphql(
+                SMARTFLEX_PLANNED_DISPATCHES_QUERY,
+                {"deviceId": normalized_device["id"]},
+            )
+            planned_dispatches = (
+                _normalize_smartflex_planned_dispatches(
+                    planned_data.get("flexPlannedDispatches")
+                )
+                if isinstance(planned_data, dict)
+                else []
+            )
+            planned_dispatches = [
+                dispatch
+                for dispatch in planned_dispatches
+                if (start := _parse_smartflex_datetime(dispatch.get("start"))) is not None
+                and start >= self._now()
+            ]
+            snapshots.append(
+                build_smartflex_device_snapshot(
+                    normalized_device,
+                    select_next_planned_dispatch(planned_dispatches),
+                )
+            )
+
+        return tuple(snapshots)
+
+    async def _async_get_latest_completed_dispatch(
+        self, account_number: str
+    ) -> SmartFlexCompletedDispatchSnapshot | None:
+        data = await self._async_optional_authenticated_graphql(
+            SMARTFLEX_COMPLETED_DISPATCHES_QUERY,
+            {"accountNumber": account_number},
+        )
+        completed_dispatches = (
+            _normalize_completed_dispatches(data.get("completedDispatches"))
+            if isinstance(data, dict)
+            else []
+        )
+        return select_latest_completed_dispatch(completed_dispatches)
 
     def _store_token_state(self, token_payload: dict[str, Any]) -> None:
         self._token = token_payload["token"]
@@ -505,6 +748,299 @@ def _parse_decimal_string(value: str | None) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_float(value: Any) -> float | None:
+    if value is None:
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_smartflex_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+
+    try:
+        return _parse_datetime(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_smartflex_charging_sessions(charging_sessions: Any) -> list[dict[str, Any]]:
+    if not isinstance(charging_sessions, dict):
+        return []
+
+    edges = charging_sessions.get("edges")
+    if not isinstance(edges, list):
+        return []
+
+    normalized_sessions = []
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+
+        session = edge.get("node")
+        if not isinstance(session, dict):
+            continue
+
+        energy_added = session.get("energyAdded")
+        cost = session.get("cost")
+        normalized_sessions.append(
+            {
+                "start": session.get("start"),
+                "end": session.get("end"),
+                "stateOfChargeChange": session.get("stateOfChargeChange"),
+                "stateOfChargeFinal": session.get("stateOfChargeFinal"),
+                "energyAddedValue": (
+                    energy_added.get("value") if isinstance(energy_added, dict) else None
+                ),
+                "energyAddedUnit": (
+                    energy_added.get("unit") if isinstance(energy_added, dict) else None
+                ),
+                "costAmount": cost.get("amount") if isinstance(cost, dict) else None,
+                "costCurrency": cost.get("currency") if isinstance(cost, dict) else None,
+            }
+        )
+
+    return normalized_sessions
+
+
+def _normalize_smartflex_device(device: Any) -> dict[str, Any] | None:
+    if not isinstance(device, dict):
+        return None
+
+    graphql_type = device.get("__typename")
+    if graphql_type not in {"SmartFlexVehicle", "SmartFlexChargePoint"}:
+        return None
+
+    status = device.get("status")
+    if not isinstance(status, dict):
+        status = {}
+
+    return {
+        "id": device.get("id"),
+        "name": device.get("name"),
+        "deviceType": device.get("deviceType"),
+        "provider": device.get("provider"),
+        "integrationDeviceId": device.get("integrationDeviceId"),
+        "propertyId": device.get("propertyId"),
+        "make": device.get("make"),
+        "model": device.get("model"),
+        "vehicleBatterySizeKwh": device.get("vehicleBatterySize"),
+        "chargePointPowerOutputKw": device.get("chargePointPowerOutput"),
+        "lifecycleStatus": status.get("current"),
+        "currentState": status.get("currentState"),
+        "isSuspended": status.get("isSuspended"),
+        "stateOfCharge": status.get("stateOfCharge"),
+        "activePower": status.get("activePower"),
+        "stateOfChargeLimit": status.get("stateOfChargeLimit"),
+        "testDispatchFailureReason": status.get("testDispatchFailureReason"),
+        "chargingSessions": _normalize_smartflex_charging_sessions(
+            device.get("chargingSessions")
+        ),
+    }
+
+
+def _normalize_smartflex_planned_dispatches(planned_dispatches: Any) -> list[dict[str, Any]]:
+    if not isinstance(planned_dispatches, list):
+        return []
+
+    return [
+        {
+            "start": dispatch.get("start"),
+            "end": dispatch.get("end"),
+            "dispatchType": dispatch.get("type"),
+            "energyAddedKwh": dispatch.get("energyAddedKwh"),
+        }
+        for dispatch in planned_dispatches
+        if isinstance(dispatch, dict)
+    ]
+
+
+def _normalize_completed_dispatches(completed_dispatches: Any) -> list[dict[str, Any]]:
+    if not isinstance(completed_dispatches, list):
+        return []
+
+    normalized_dispatches = []
+    for dispatch in completed_dispatches:
+        if not isinstance(dispatch, dict):
+            continue
+
+        meta = dispatch.get("meta")
+        normalized_dispatches.append(
+            {
+                "start": dispatch.get("start"),
+                "end": dispatch.get("end"),
+                "delta": dispatch.get("delta"),
+                "source": meta.get("source") if isinstance(meta, dict) else None,
+                "location": meta.get("location") if isinstance(meta, dict) else None,
+            }
+        )
+
+    return normalized_dispatches
+
+
+def _build_smartflex_reading_snapshot(reading: Any) -> SmartFlexReadingSnapshot | None:
+    if not isinstance(reading, dict):
+        return None
+
+    timestamp = _parse_smartflex_datetime(reading.get("timestamp"))
+    value = _parse_float(reading.get("value"))
+    if timestamp is None or value is None:
+        return None
+
+    return SmartFlexReadingSnapshot(
+        timestamp=timestamp,
+        value=value,
+    )
+
+
+def _build_smartflex_soc_limit_snapshot(
+    soc_limit: Any,
+) -> SmartFlexSocLimitSnapshot | None:
+    if not isinstance(soc_limit, dict):
+        return None
+
+    timestamp = _parse_smartflex_datetime(soc_limit.get("timestamp"))
+    upper_soc_limit = _parse_float(soc_limit.get("upperSocLimit"))
+    is_limit_violated = soc_limit.get("isLimitViolated")
+    if (
+        timestamp is None
+        or upper_soc_limit is None
+        or not isinstance(is_limit_violated, bool)
+    ):
+        return None
+
+    return SmartFlexSocLimitSnapshot(
+        upper_soc_limit=upper_soc_limit,
+        timestamp=timestamp,
+        is_limit_violated=is_limit_violated,
+    )
+
+
+def select_next_planned_dispatch(
+    planned_dispatches: Any,
+) -> SmartFlexPlannedDispatchSnapshot | None:
+    if not isinstance(planned_dispatches, list):
+        return None
+
+    snapshots = []
+    for dispatch in planned_dispatches:
+        if not isinstance(dispatch, dict):
+            continue
+
+        start = _parse_smartflex_datetime(dispatch.get("start"))
+        if start is None:
+            continue
+
+        snapshots.append(
+            SmartFlexPlannedDispatchSnapshot(
+                start=start,
+                end=_parse_smartflex_datetime(dispatch.get("end")),
+                dispatch_type=dispatch.get("dispatchType"),
+                energy_added_kwh=_parse_float(dispatch.get("energyAddedKwh")),
+            )
+        )
+
+    if not snapshots:
+        return None
+
+    return min(snapshots, key=lambda snapshot: snapshot.start)
+
+
+def select_latest_completed_dispatch(
+    completed_dispatches: Any,
+) -> SmartFlexCompletedDispatchSnapshot | None:
+    if not isinstance(completed_dispatches, list):
+        return None
+
+    snapshots = []
+    for dispatch in completed_dispatches:
+        if not isinstance(dispatch, dict):
+            continue
+
+        start = _parse_smartflex_datetime(dispatch.get("start"))
+        end = _parse_smartflex_datetime(dispatch.get("end"))
+        if start is None or end is None:
+            continue
+
+        snapshots.append(
+            SmartFlexCompletedDispatchSnapshot(
+                start=start,
+                end=end,
+                delta=_parse_float(dispatch.get("delta")),
+                source=dispatch.get("source"),
+                location=dispatch.get("location"),
+            )
+        )
+
+    if not snapshots:
+        return None
+
+    return max(snapshots, key=lambda snapshot: snapshot.end)
+
+
+def build_smartflex_device_snapshot(
+    device: dict[str, Any],
+    next_planned_dispatch: SmartFlexPlannedDispatchSnapshot | None,
+) -> SmartFlexDeviceSnapshot:
+    latest_charging_session = None
+    latest_start = None
+    charging_sessions = device.get("chargingSessions", [])
+
+    if not isinstance(charging_sessions, list):
+        charging_sessions = []
+
+    for session in charging_sessions:
+        if not isinstance(session, dict):
+            continue
+
+        start = _parse_smartflex_datetime(session.get("start"))
+        if start is None:
+            continue
+
+        if latest_start is not None and start <= latest_start:
+            continue
+
+        latest_charging_session = SmartFlexChargingSessionSnapshot(
+            start=start,
+            end=_parse_smartflex_datetime(session.get("end")),
+            state_of_charge_change=_parse_float(session.get("stateOfChargeChange")),
+            state_of_charge_final=_parse_float(session.get("stateOfChargeFinal")),
+            energy_added_value=_parse_float(session.get("energyAddedValue")),
+            energy_added_unit=session.get("energyAddedUnit"),
+            cost_amount=_parse_float(session.get("costAmount")),
+            cost_currency=session.get("costCurrency"),
+        )
+        latest_start = start
+
+    return SmartFlexDeviceSnapshot(
+        device_id=device["id"],
+        name=device.get("name"),
+        device_type=device.get("deviceType"),
+        provider=device.get("provider"),
+        integration_device_id=device.get("integrationDeviceId"),
+        property_id=device.get("propertyId"),
+        make=device.get("make"),
+        model=device.get("model"),
+        vehicle_battery_size_kwh=_parse_float(device.get("vehicleBatterySizeKwh")),
+        charge_point_power_output_kw=_parse_float(device.get("chargePointPowerOutputKw")),
+        lifecycle_status=device.get("lifecycleStatus"),
+        current_state=device.get("currentState"),
+        is_suspended=device.get("isSuspended"),
+        state_of_charge=_build_smartflex_reading_snapshot(device.get("stateOfCharge", {})),
+        active_power=_build_smartflex_reading_snapshot(device.get("activePower", {})),
+        state_of_charge_limit=_build_smartflex_soc_limit_snapshot(
+            device.get("stateOfChargeLimit", {})
+        ),
+        test_dispatch_failure_reason=device.get("testDispatchFailureReason"),
+        latest_charging_session=latest_charging_session,
+        next_planned_dispatch=next_planned_dispatch,
+    )
 
 
 def _statement_transaction_fields(statement: dict | None) -> dict[str, Any]:

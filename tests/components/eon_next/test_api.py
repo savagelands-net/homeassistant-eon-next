@@ -16,10 +16,21 @@ from custom_components.eon_next.api import (
     EonNextRatesAuthError,
     EonNextRatesClient,
     EonNextRatesUnsupportedError,
+    SmartFlexChargingSessionSnapshot,
+    SmartFlexCompletedDispatchSnapshot,
+    SmartFlexDeviceSnapshot,
+    SmartFlexPlannedDispatchSnapshot,
+    SmartFlexReadingSnapshot,
+    SmartFlexSocLimitSnapshot,
     build_account_snapshot,
+    build_smartflex_device_snapshot,
     select_account_number,
     select_active_half_hourly_agreement,
+    select_latest_completed_dispatch,
+    select_next_planned_dispatch,
 )
+
+_UNSET = object()
 
 
 class _FakeResponse:
@@ -237,6 +248,323 @@ def _agreement_payload_with_meter_readings(*readings: dict[str, Any]) -> dict[st
     }
 
 
+def _smartflex_reading_payload(
+    *,
+    timestamp: str,
+    value: float,
+) -> dict[str, Any]:
+    return {
+        "timestamp": timestamp,
+        "value": value,
+    }
+
+
+def _smartflex_soc_limit_payload(
+    *, timestamp: str, upper_soc_limit: float, is_limit_violated: bool
+) -> dict[str, Any]:
+    return {
+        "timestamp": timestamp,
+        "upperSocLimit": upper_soc_limit,
+        "isLimitViolated": is_limit_violated,
+    }
+
+
+def _smartflex_planned_dispatch_payload(
+    *,
+    start: str,
+    end: str,
+    dispatch_type: str,
+    energy_added_kwh: float,
+) -> dict[str, Any]:
+    return {
+        "start": start,
+        "end": end,
+        "dispatchType": dispatch_type,
+        "energyAddedKwh": energy_added_kwh,
+    }
+
+
+def _smartflex_completed_dispatch_payload(
+    *,
+    start: str,
+    end: str,
+    delta: float,
+    source: str,
+    location: str,
+) -> dict[str, Any]:
+    return {
+        "start": start,
+        "end": end,
+        "delta": delta,
+        "source": source,
+        "location": location,
+    }
+
+
+def _smartflex_charging_session_payload(
+    *,
+    start: str,
+    end: str | None,
+    state_of_charge_change: float,
+    state_of_charge_final: float,
+    energy_added_value: float,
+    energy_added_unit: str,
+    cost_amount: float,
+    cost_currency: str,
+    readings: list[dict[str, Any]] | None = None,
+    soc_limits: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "start": start,
+        "end": end,
+        "stateOfChargeChange": state_of_charge_change,
+        "stateOfChargeFinal": state_of_charge_final,
+        "energyAddedValue": energy_added_value,
+        "energyAddedUnit": energy_added_unit,
+        "costAmount": cost_amount,
+        "costCurrency": cost_currency,
+        "readings": readings or [],
+        "socLimits": soc_limits or [],
+    }
+
+
+def _smartflex_device_payload(
+    *,
+    device_id: str = "device-1",
+    name: str = "Driveway Charger",
+    device_type: str = "EV_CHARGER",
+    provider: str = "EON_NEXT_DRIVE",
+    integration_device_id: str = "integration-device-1",
+    property_id: str = "property-1",
+    make: str = "Wallbox",
+    model: str = "Pulsar Plus",
+    vehicle_battery_size_kwh: float = 64.0,
+    charge_point_power_output_kw: float = 7.4,
+    lifecycle_status: str = "LIVE",
+    current_state: str = "CHARGING",
+    is_suspended: bool = False,
+    state_of_charge: dict[str, Any] | None | object = _UNSET,
+    active_power: dict[str, Any] | None | object = _UNSET,
+    state_of_charge_limit: dict[str, Any] | None | object = _UNSET,
+    test_dispatch_failure_reason: str | None = None,
+    sessions: list[dict[str, Any]] | None = None,
+    completed_dispatches: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": device_id,
+        "name": name,
+        "deviceType": device_type,
+        "provider": provider,
+        "integrationDeviceId": integration_device_id,
+        "propertyId": property_id,
+        "make": make,
+        "model": model,
+        "vehicleBatterySizeKwh": vehicle_battery_size_kwh,
+        "chargePointPowerOutputKw": charge_point_power_output_kw,
+        "lifecycleStatus": lifecycle_status,
+        "currentState": current_state,
+        "isSuspended": is_suspended,
+        "stateOfCharge": (
+            {"timestamp": "2026-05-01T20:10:00+00:00", "value": 55.0}
+            if state_of_charge is _UNSET
+            else state_of_charge
+        ),
+        "activePower": (
+            {"timestamp": "2026-05-01T20:10:00+00:00", "value": 6.8}
+            if active_power is _UNSET
+            else active_power
+        ),
+        "stateOfChargeLimit": (
+            {
+                "timestamp": "2026-05-01T20:00:00+00:00",
+                "upperSocLimit": 90.0,
+                "isLimitViolated": False,
+            }
+            if state_of_charge_limit is _UNSET
+            else state_of_charge_limit
+        ),
+        "testDispatchFailureReason": test_dispatch_failure_reason,
+        "chargingSessions": sessions or [],
+        "completedDispatches": completed_dispatches or [],
+    }
+
+
+def _smartflex_devices_graphql_payload(*devices: dict[str, Any]) -> dict[str, Any]:
+    return {"data": {"devices": list(devices)}}
+
+
+def _smartflex_planned_dispatches_graphql_payload(
+    *dispatches: dict[str, Any],
+) -> dict[str, Any]:
+    return {"data": {"flexPlannedDispatches": list(dispatches)}}
+
+
+def _smartflex_completed_dispatches_graphql_payload(
+    *dispatches: dict[str, Any],
+) -> dict[str, Any]:
+    return {"data": {"completedDispatches": list(dispatches)}}
+
+
+def _smartflex_graphql_charging_session_payload(
+    *,
+    start: str,
+    end: str | None,
+    state_of_charge_change: float,
+    state_of_charge_final: float,
+    energy_added_value: float,
+    energy_added_unit: str,
+    cost_amount: float,
+    cost_currency: str,
+) -> dict[str, Any]:
+    return {
+        "start": start,
+        "end": end,
+        "stateOfChargeChange": state_of_charge_change,
+        "stateOfChargeFinal": state_of_charge_final,
+        "energyAdded": {
+            "value": energy_added_value,
+            "unit": energy_added_unit,
+        },
+        "cost": {
+            "amount": cost_amount,
+            "currency": cost_currency,
+        },
+    }
+
+
+def _smartflex_vehicle_graphql_payload(
+    *,
+    device_id: str = "vehicle-1",
+    device_type: str = "EV",
+    name: str = "Family EV",
+    provider: str = "EON_NEXT_DRIVE",
+    integration_device_id: str = "vehicle-integration-1",
+    property_id: str = "property-1",
+    make: str = "Kia",
+    model: str = "EV6",
+    vehicle_battery_size: float = 77.4,
+    current_state: str = "READY",
+    current: str = "LIVE",
+    is_suspended: bool = False,
+    charging_sessions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "__typename": "SmartFlexVehicle",
+        "id": device_id,
+        "deviceType": device_type,
+        "name": name,
+        "provider": provider,
+        "integrationDeviceId": integration_device_id,
+        "propertyId": property_id,
+        "make": make,
+        "model": model,
+        "vehicleBatterySize": vehicle_battery_size,
+        "status": {
+            "current": current,
+            "isSuspended": is_suspended,
+            "currentState": current_state,
+            "stateOfCharge": {
+                "timestamp": "2026-05-01T20:10:00+00:00",
+                "value": 55.0,
+            },
+            "activePower": {
+                "timestamp": "2026-05-01T20:10:00+00:00",
+                "value": 6.8,
+            },
+            "stateOfChargeLimit": {
+                "upperSocLimit": 90.0,
+                "timestamp": "2026-05-01T20:00:00+00:00",
+                "isLimitViolated": False,
+            },
+            "testDispatchFailureReason": None,
+        },
+        "chargingSessions": {
+            "edges": [
+                {"node": session} for session in (charging_sessions or [])
+            ]
+        },
+    }
+
+
+def _smartflex_charge_point_graphql_payload(
+    *,
+    device_id: str = "charger-1",
+    device_type: str = "EV_CHARGER",
+    name: str = "Driveway Charger",
+    provider: str = "EON_NEXT_DRIVE",
+    integration_device_id: str = "charger-integration-1",
+    property_id: str = "property-1",
+    make: str = "Wallbox",
+    model: str = "Pulsar Plus",
+    charge_point_power_output: float = 7.4,
+    current_state: str = "CHARGING",
+    current: str = "LIVE",
+    is_suspended: bool = False,
+    charging_sessions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "__typename": "SmartFlexChargePoint",
+        "id": device_id,
+        "deviceType": device_type,
+        "name": name,
+        "provider": provider,
+        "integrationDeviceId": integration_device_id,
+        "propertyId": property_id,
+        "make": make,
+        "model": model,
+        "chargePointPowerOutput": charge_point_power_output,
+        "status": {
+            "current": current,
+            "isSuspended": is_suspended,
+            "currentState": current_state,
+            "stateOfCharge": {
+                "timestamp": "2026-05-01T20:10:00+00:00",
+                "value": 55.0,
+            },
+            "activePower": {
+                "timestamp": "2026-05-01T20:10:00+00:00",
+                "value": 6.8,
+            },
+            "stateOfChargeLimit": {
+                "upperSocLimit": 90.0,
+                "timestamp": "2026-05-01T20:00:00+00:00",
+                "isLimitViolated": False,
+            },
+            "testDispatchFailureReason": None,
+        },
+        "chargingSessions": {
+            "edges": [
+                {"node": session} for session in (charging_sessions or [])
+            ]
+        },
+    }
+
+
+def _smartflex_non_ev_graphql_payload() -> dict[str, Any]:
+    return {
+        "__typename": "SmartFlexBattery",
+        "id": "battery-1",
+        "deviceType": "BATTERY",
+        "name": "Home Battery",
+        "provider": "EON_NEXT_DRIVE",
+        "integrationDeviceId": "battery-integration-1",
+        "propertyId": "property-1",
+        "status": {
+            "current": "LIVE",
+            "isSuspended": False,
+            "currentState": "IDLE",
+            "stateOfCharge": None,
+            "activePower": None,
+            "stateOfChargeLimit": None,
+            "testDispatchFailureReason": None,
+        },
+    }
+
+
+def _graphql_error_payload(message: str = "Optional SmartFlex query failed") -> dict[str, Any]:
+    return {"errors": [{"message": message}]}
+
+
 def _auth_error_payload() -> dict[str, Any]:
     return {
         "errors": [
@@ -400,6 +728,261 @@ def test_build_account_snapshot_includes_account_and_agreement_metadata() -> Non
     assert snapshot.latest_meter_reading_register_digits == 5
     assert snapshot.latest_meter_reading_register_is_quarantined is False
     assert snapshot.meter_point_mpan == "0012345678901"
+
+
+def test_build_account_snapshot_defaults_smartflex_surfaces_to_empty() -> None:
+    snapshot = build_account_snapshot(
+        _account_payload(),
+        _agreement_payload_with_meter_readings(),
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.smartflex_devices == ()
+    assert snapshot.latest_completed_dispatch is None
+
+
+def test_build_smartflex_device_snapshot_selects_latest_session_and_planned_dispatch() -> None:
+    device = _smartflex_device_payload(
+        sessions=[
+            _smartflex_charging_session_payload(
+                start="2026-05-01T18:00:00+00:00",
+                end="2026-05-01T19:00:00+00:00",
+                state_of_charge_change=18,
+                state_of_charge_final=42,
+                energy_added_value=3.2,
+                energy_added_unit="kWh",
+                cost_amount=0.64,
+                cost_currency="GBP",
+            ),
+            _smartflex_charging_session_payload(
+                start="2026-05-01T20:00:00+00:00",
+                end=None,
+                state_of_charge_change=23,
+                state_of_charge_final=55,
+                energy_added_value=5.6,
+                energy_added_unit="kWh",
+                cost_amount=1.12,
+                cost_currency="GBP",
+            ),
+        ],
+    )
+
+    next_planned_dispatch = SmartFlexPlannedDispatchSnapshot(
+        start=datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
+        end=datetime(2026, 5, 1, 21, 30, tzinfo=UTC),
+        dispatch_type="GRID_CHARGE",
+        energy_added_kwh=2.5,
+    )
+
+    snapshot = build_smartflex_device_snapshot(device, next_planned_dispatch)
+
+    assert snapshot == SmartFlexDeviceSnapshot(
+        device_id="device-1",
+        name="Driveway Charger",
+        device_type="EV_CHARGER",
+        provider="EON_NEXT_DRIVE",
+        integration_device_id="integration-device-1",
+        property_id="property-1",
+        make="Wallbox",
+        model="Pulsar Plus",
+        vehicle_battery_size_kwh=64.0,
+        charge_point_power_output_kw=7.4,
+        lifecycle_status="LIVE",
+        current_state="CHARGING",
+        is_suspended=False,
+        state_of_charge=SmartFlexReadingSnapshot(
+            timestamp=datetime(2026, 5, 1, 20, 10, tzinfo=UTC),
+            value=55.0,
+        ),
+        active_power=SmartFlexReadingSnapshot(
+            timestamp=datetime(2026, 5, 1, 20, 10, tzinfo=UTC),
+            value=6.8,
+        ),
+        state_of_charge_limit=SmartFlexSocLimitSnapshot(
+            upper_soc_limit=90.0,
+            timestamp=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+            is_limit_violated=False,
+        ),
+        test_dispatch_failure_reason=None,
+        latest_charging_session=SmartFlexChargingSessionSnapshot(
+            start=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+            end=None,
+            state_of_charge_change=23,
+            state_of_charge_final=55,
+            energy_added_value=5.6,
+            energy_added_unit="kWh",
+            cost_amount=1.12,
+            cost_currency="GBP",
+        ),
+        next_planned_dispatch=next_planned_dispatch,
+    )
+
+
+def test_build_smartflex_device_snapshot_ignores_null_or_non_dict_nested_subobjects() -> None:
+    device = _smartflex_device_payload(
+        state_of_charge=None,
+        active_power="not-a-dict",
+        state_of_charge_limit=42,
+        sessions=[],
+    )
+
+    snapshot = build_smartflex_device_snapshot(device, None)
+
+    assert snapshot.state_of_charge is None
+    assert snapshot.active_power is None
+    assert snapshot.state_of_charge_limit is None
+
+
+def test_select_next_planned_dispatch_uses_earliest_valid_dispatch() -> None:
+    planned_dispatches = [
+        {"start": None, "end": "2026-05-01T20:30:00+00:00"},
+        _smartflex_planned_dispatch_payload(
+            start="2026-05-01T22:00:00+00:00",
+            end="2026-05-01T22:30:00+00:00",
+            dispatch_type="GRID_CHARGE",
+            energy_added_kwh=4.4,
+        ),
+        _smartflex_planned_dispatch_payload(
+            start="2026-05-01T21:00:00+00:00",
+            end="2026-05-01T21:30:00+00:00",
+            dispatch_type="GRID_CHARGE",
+            energy_added_kwh=2.5,
+        ),
+        {"start": "not-a-datetime", "dispatchType": "GRID_CHARGE"},
+    ]
+
+    assert select_next_planned_dispatch(planned_dispatches) == SmartFlexPlannedDispatchSnapshot(
+        start=datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
+        end=datetime(2026, 5, 1, 21, 30, tzinfo=UTC),
+        dispatch_type="GRID_CHARGE",
+        energy_added_kwh=2.5,
+    )
+
+
+def test_select_next_planned_dispatch_ignores_malformed_containers_and_members() -> None:
+    assert select_next_planned_dispatch("not-a-list") is None
+
+    assert select_next_planned_dispatch(
+        [
+            "not-a-dict",
+            42,
+            _smartflex_planned_dispatch_payload(
+                start="2026-05-01T21:00:00+00:00",
+                end="2026-05-01T21:30:00+00:00",
+                dispatch_type="GRID_CHARGE",
+                energy_added_kwh=2.5,
+            ),
+        ]
+    ) == SmartFlexPlannedDispatchSnapshot(
+        start=datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
+        end=datetime(2026, 5, 1, 21, 30, tzinfo=UTC),
+        dispatch_type="GRID_CHARGE",
+        energy_added_kwh=2.5,
+    )
+
+
+def test_select_active_half_hourly_agreement_preserves_fail_fast_invalid_datetime() -> None:
+    with pytest.raises(ValueError, match="Invalid isoformat string"):
+        select_active_half_hourly_agreement(
+            {
+                "electricityAgreements": [
+                    {
+                        "validFrom": "not-a-datetime",
+                        "validTo": None,
+                        "tariff": {"__typename": "HalfHourlyTariff"},
+                    }
+                ]
+            },
+            datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+        )
+
+
+def test_select_latest_completed_dispatch_uses_most_recent_dispatch() -> None:
+    completed_dispatches = [
+        _smartflex_completed_dispatch_payload(
+            start="2026-05-01T18:00:00+00:00",
+            end="2026-05-01T18:30:00+00:00",
+            delta=2.2,
+            source="GRID",
+            location="HOME",
+        ),
+        _smartflex_completed_dispatch_payload(
+            start="2026-05-01T19:00:00+00:00",
+            end="2026-05-01T20:00:00+00:00",
+            delta=3.8,
+            source="GRID",
+            location="HOME",
+        ),
+    ]
+
+    assert select_latest_completed_dispatch(
+        completed_dispatches
+    ) == SmartFlexCompletedDispatchSnapshot(
+        start=datetime(2026, 5, 1, 19, 0, tzinfo=UTC),
+        end=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+        delta=3.8,
+        source="GRID",
+        location="HOME",
+    )
+
+
+def test_select_latest_completed_dispatch_ignores_malformed_containers_and_members() -> None:
+    assert select_latest_completed_dispatch("not-a-list") is None
+
+    assert select_latest_completed_dispatch(
+        [
+            "not-a-dict",
+            42,
+            _smartflex_completed_dispatch_payload(
+                start="2026-05-01T19:00:00+00:00",
+                end="2026-05-01T20:00:00+00:00",
+                delta=3.8,
+                source="GRID",
+                location="HOME",
+            ),
+        ]
+    ) == SmartFlexCompletedDispatchSnapshot(
+        start=datetime(2026, 5, 1, 19, 0, tzinfo=UTC),
+        end=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+        delta=3.8,
+        source="GRID",
+        location="HOME",
+    )
+
+
+def test_build_smartflex_device_snapshot_ignores_malformed_charging_sessions_collection() -> None:
+    malformed_container_device = _smartflex_device_payload(sessions="not-a-list")
+    snapshot = build_smartflex_device_snapshot(malformed_container_device, None)
+    assert snapshot.latest_charging_session is None
+
+    malformed_member_device = _smartflex_device_payload(
+        sessions=[
+            "not-a-dict",
+            42,
+            _smartflex_charging_session_payload(
+                start="2026-05-01T20:00:00+00:00",
+                end=None,
+                state_of_charge_change=23,
+                state_of_charge_final=55,
+                energy_added_value=5.6,
+                energy_added_unit="kWh",
+                cost_amount=1.12,
+                cost_currency="GBP",
+            ),
+        ]
+    )
+    snapshot = build_smartflex_device_snapshot(malformed_member_device, None)
+
+    assert snapshot.latest_charging_session == SmartFlexChargingSessionSnapshot(
+        start=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+        end=None,
+        state_of_charge_change=23,
+        state_of_charge_final=55,
+        energy_added_value=5.6,
+        energy_added_unit="kWh",
+        cost_amount=1.12,
+        cost_currency="GBP",
+    )
 
 
 def test_build_account_snapshot_includes_latest_statement_breakdown() -> None:
@@ -1116,6 +1699,8 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
             _viewer_payload(),
             agreement_payload,
             agreement_payload,
+            _smartflex_devices_graphql_payload(),
+            _smartflex_completed_dispatches_graphql_payload(),
         ]
     )
     client = EonNextRatesClient(
@@ -1180,11 +1765,446 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
     assert session.requests[3]["json"]["query"] == AGREEMENTS_QUERY
     assert "bills(first: 1, orderBy: ISSUED_DATE_DESC)" in session.requests[3]["json"]["query"]
     assert session.requests[3]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
+    assert session.requests[4]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
+    assert session.requests[5]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert snapshot.current_account_balance_gbp == 123.45
     assert snapshot.latest_statement_closing_balance_gbp == 98.76
     assert snapshot.latest_statement_charges_gbp == 54.32
     assert snapshot.gas_rate_gbp_per_kwh == 0.06543
     assert snapshot.gas_meter_point_mprn == "1234567890"
+
+
+def test_async_get_account_snapshot_includes_smartflex_devices_and_latest_completed_dispatch(
+) -> None:
+    agreement_payload = {
+        "data": {
+            "account": {
+                "number": "A-TEST0001",
+                "electricityAgreements": [
+                    {
+                        "id": "agreement-current",
+                        "validFrom": "2026-04-01T00:00:00+00:00",
+                        "validTo": None,
+                        "meterPoint": {
+                            "mpan": "0012345678901",
+                            "unbilledReadings": [],
+                        },
+                        "tariff": {
+                            "__typename": "HalfHourlyTariff",
+                            "displayName": "Next Drive Smart V5.2",
+                            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+                            "standingCharge": 60.00015,
+                            "preVatStandingCharge": 57.143,
+                            "unitRates": [
+                                {
+                                    "value": 23.9022,
+                                    "validFrom": "2026-05-01T12:00:00+00:00",
+                                    "validTo": "2026-05-01T12:30:00+00:00",
+                                },
+                                {
+                                    "value": 24.5,
+                                    "validFrom": "2026-05-01T12:30:00+00:00",
+                                    "validTo": "2026-05-01T13:00:00+00:00",
+                                },
+                            ],
+                        },
+                    }
+                ],
+            }
+        }
+    }
+    session = _FakeSession(
+        [
+            _token_payload("access-1", "refresh-1", 2000000000),
+            _viewer_payload(),
+            agreement_payload,
+            agreement_payload,
+            _smartflex_devices_graphql_payload(
+                _smartflex_vehicle_graphql_payload(
+                    charging_sessions=[
+                        _smartflex_graphql_charging_session_payload(
+                            start="2026-05-01T18:00:00+00:00",
+                            end="2026-05-01T19:00:00+00:00",
+                            state_of_charge_change=18,
+                            state_of_charge_final=42,
+                            energy_added_value=3.2,
+                            energy_added_unit="kWh",
+                            cost_amount=0.64,
+                            cost_currency="GBP",
+                        )
+                    ]
+                ),
+                _smartflex_charge_point_graphql_payload(
+                    charging_sessions=[
+                        _smartflex_graphql_charging_session_payload(
+                            start="2026-05-01T20:00:00+00:00",
+                            end=None,
+                            state_of_charge_change=23,
+                            state_of_charge_final=55,
+                            energy_added_value=5.6,
+                            energy_added_unit="kWh",
+                            cost_amount=1.12,
+                            cost_currency="GBP",
+                        )
+                    ]
+                ),
+                _smartflex_non_ev_graphql_payload(),
+            ),
+            _smartflex_planned_dispatches_graphql_payload(
+                {
+                    "start": "2026-05-01T22:00:00+00:00",
+                    "end": "2026-05-01T22:30:00+00:00",
+                    "type": "GRID_CHARGE",
+                    "energyAddedKwh": 4.4,
+                },
+                {
+                    "start": "2026-05-01T21:00:00+00:00",
+                    "end": "2026-05-01T21:30:00+00:00",
+                    "type": "GRID_CHARGE",
+                    "energyAddedKwh": 2.5,
+                },
+            ),
+            _smartflex_planned_dispatches_graphql_payload(
+                {
+                    "start": "2026-05-01T23:00:00+00:00",
+                    "end": "2026-05-01T23:30:00+00:00",
+                    "type": "GRID_CHARGE",
+                    "energyAddedKwh": 3.3,
+                }
+            ),
+            _smartflex_completed_dispatches_graphql_payload(
+                {
+                    "start": "2026-05-01T18:00:00+00:00",
+                    "end": "2026-05-01T18:30:00+00:00",
+                    "delta": 2.2,
+                    "meta": {"source": "GRID", "location": "HOME"},
+                },
+                {
+                    "start": "2026-05-01T19:00:00+00:00",
+                    "end": "2026-05-01T20:00:00+00:00",
+                    "delta": 3.8,
+                    "meta": {"source": "GRID", "location": "HOME"},
+                },
+            ),
+        ]
+    )
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    snapshot = asyncio.run(client.async_get_account_snapshot())
+
+    assert len(snapshot.smartflex_devices) == 2
+    assert snapshot.smartflex_devices[0] == SmartFlexDeviceSnapshot(
+        device_id="vehicle-1",
+        name="Family EV",
+        device_type="EV",
+        provider="EON_NEXT_DRIVE",
+        integration_device_id="vehicle-integration-1",
+        property_id="property-1",
+        make="Kia",
+        model="EV6",
+        vehicle_battery_size_kwh=77.4,
+        charge_point_power_output_kw=None,
+        lifecycle_status="LIVE",
+        current_state="READY",
+        is_suspended=False,
+        state_of_charge=SmartFlexReadingSnapshot(
+            timestamp=datetime(2026, 5, 1, 20, 10, tzinfo=UTC),
+            value=55.0,
+        ),
+        active_power=SmartFlexReadingSnapshot(
+            timestamp=datetime(2026, 5, 1, 20, 10, tzinfo=UTC),
+            value=6.8,
+        ),
+        state_of_charge_limit=SmartFlexSocLimitSnapshot(
+            upper_soc_limit=90.0,
+            timestamp=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+            is_limit_violated=False,
+        ),
+        test_dispatch_failure_reason=None,
+        latest_charging_session=SmartFlexChargingSessionSnapshot(
+            start=datetime(2026, 5, 1, 18, 0, tzinfo=UTC),
+            end=datetime(2026, 5, 1, 19, 0, tzinfo=UTC),
+            state_of_charge_change=18,
+            state_of_charge_final=42,
+            energy_added_value=3.2,
+            energy_added_unit="kWh",
+            cost_amount=0.64,
+            cost_currency="GBP",
+        ),
+        next_planned_dispatch=SmartFlexPlannedDispatchSnapshot(
+            start=datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
+            end=datetime(2026, 5, 1, 21, 30, tzinfo=UTC),
+            dispatch_type="GRID_CHARGE",
+            energy_added_kwh=2.5,
+        ),
+    )
+    assert snapshot.smartflex_devices[1] == SmartFlexDeviceSnapshot(
+        device_id="charger-1",
+        name="Driveway Charger",
+        device_type="EV_CHARGER",
+        provider="EON_NEXT_DRIVE",
+        integration_device_id="charger-integration-1",
+        property_id="property-1",
+        make="Wallbox",
+        model="Pulsar Plus",
+        vehicle_battery_size_kwh=None,
+        charge_point_power_output_kw=7.4,
+        lifecycle_status="LIVE",
+        current_state="CHARGING",
+        is_suspended=False,
+        state_of_charge=SmartFlexReadingSnapshot(
+            timestamp=datetime(2026, 5, 1, 20, 10, tzinfo=UTC),
+            value=55.0,
+        ),
+        active_power=SmartFlexReadingSnapshot(
+            timestamp=datetime(2026, 5, 1, 20, 10, tzinfo=UTC),
+            value=6.8,
+        ),
+        state_of_charge_limit=SmartFlexSocLimitSnapshot(
+            upper_soc_limit=90.0,
+            timestamp=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+            is_limit_violated=False,
+        ),
+        test_dispatch_failure_reason=None,
+        latest_charging_session=SmartFlexChargingSessionSnapshot(
+            start=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+            end=None,
+            state_of_charge_change=23,
+            state_of_charge_final=55,
+            energy_added_value=5.6,
+            energy_added_unit="kWh",
+            cost_amount=1.12,
+            cost_currency="GBP",
+        ),
+        next_planned_dispatch=SmartFlexPlannedDispatchSnapshot(
+            start=datetime(2026, 5, 1, 23, 0, tzinfo=UTC),
+            end=datetime(2026, 5, 1, 23, 30, tzinfo=UTC),
+            dispatch_type="GRID_CHARGE",
+            energy_added_kwh=3.3,
+        ),
+    )
+    assert snapshot.latest_completed_dispatch == SmartFlexCompletedDispatchSnapshot(
+        start=datetime(2026, 5, 1, 19, 0, tzinfo=UTC),
+        end=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+        delta=3.8,
+        source="GRID",
+        location="HOME",
+    )
+    assert session.requests[4]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
+    assert "devices(accountNumber: $accountNumber)" in session.requests[4]["json"]["query"]
+    assert "deviceType" in session.requests[4]["json"]["query"]
+    assert session.requests[5]["json"]["variables"] == {"deviceId": "vehicle-1"}
+    assert "flexPlannedDispatches(deviceId: $deviceId)" in session.requests[5]["json"]["query"]
+    assert session.requests[6]["json"]["variables"] == {"deviceId": "charger-1"}
+    assert session.requests[7]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
+    assert "completedDispatches(accountNumber: $accountNumber)" in session.requests[7][
+        "json"
+    ]["query"]
+
+
+def test_async_get_account_snapshot_ignores_optional_smartflex_query_failures() -> None:
+    agreement_payload = {
+        "data": {
+            "account": {
+                "number": "A-TEST0001",
+                "electricityAgreements": [
+                    {
+                        "id": "agreement-current",
+                        "validFrom": "2026-04-01T00:00:00+00:00",
+                        "validTo": None,
+                        "meterPoint": {
+                            "mpan": "0012345678901",
+                            "unbilledReadings": [],
+                        },
+                        "tariff": {
+                            "__typename": "HalfHourlyTariff",
+                            "displayName": "Next Drive Smart V5.2",
+                            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+                            "standingCharge": 60.00015,
+                            "preVatStandingCharge": 57.143,
+                            "unitRates": [
+                                {
+                                    "value": 23.9022,
+                                    "validFrom": "2026-05-01T12:00:00+00:00",
+                                    "validTo": "2026-05-01T12:30:00+00:00",
+                                },
+                                {
+                                    "value": 24.5,
+                                    "validFrom": "2026-05-01T12:30:00+00:00",
+                                    "validTo": "2026-05-01T13:00:00+00:00",
+                                },
+                            ],
+                        },
+                    }
+                ],
+            }
+        }
+    }
+    session = _FakeSession(
+        [
+            _token_payload("access-1", "refresh-1", 2000000000),
+            _viewer_payload(),
+            agreement_payload,
+            agreement_payload,
+            _smartflex_devices_graphql_payload(
+                _smartflex_vehicle_graphql_payload(
+                    device_id="vehicle-1",
+                    charging_sessions=[
+                        _smartflex_graphql_charging_session_payload(
+                            start="2026-05-01T18:00:00+00:00",
+                            end="2026-05-01T19:00:00+00:00",
+                            state_of_charge_change=18,
+                            state_of_charge_final=42,
+                            energy_added_value=3.2,
+                            energy_added_unit="kWh",
+                            cost_amount=0.64,
+                            cost_currency="GBP",
+                        )
+                    ],
+                )
+            ),
+            _graphql_error_payload("Planned dispatch query failed"),
+            _graphql_error_payload("Completed dispatch query failed"),
+        ]
+    )
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    snapshot = asyncio.run(client.async_get_account_snapshot())
+
+    assert snapshot.account_number == "A-TEST0001"
+    assert snapshot.current_rate_gbp_per_kwh == 0.239022
+    assert snapshot.smartflex_devices == (
+        SmartFlexDeviceSnapshot(
+            device_id="vehicle-1",
+            name="Family EV",
+            device_type="EV",
+            provider="EON_NEXT_DRIVE",
+            integration_device_id="vehicle-integration-1",
+            property_id="property-1",
+            make="Kia",
+            model="EV6",
+            vehicle_battery_size_kwh=77.4,
+            charge_point_power_output_kw=None,
+            lifecycle_status="LIVE",
+            current_state="READY",
+            is_suspended=False,
+            state_of_charge=SmartFlexReadingSnapshot(
+                timestamp=datetime(2026, 5, 1, 20, 10, tzinfo=UTC),
+                value=55.0,
+            ),
+            active_power=SmartFlexReadingSnapshot(
+                timestamp=datetime(2026, 5, 1, 20, 10, tzinfo=UTC),
+                value=6.8,
+            ),
+            state_of_charge_limit=SmartFlexSocLimitSnapshot(
+                upper_soc_limit=90.0,
+                timestamp=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+                is_limit_violated=False,
+            ),
+            test_dispatch_failure_reason=None,
+            latest_charging_session=SmartFlexChargingSessionSnapshot(
+                start=datetime(2026, 5, 1, 18, 0, tzinfo=UTC),
+                end=datetime(2026, 5, 1, 19, 0, tzinfo=UTC),
+                state_of_charge_change=18,
+                state_of_charge_final=42,
+                energy_added_value=3.2,
+                energy_added_unit="kWh",
+                cost_amount=0.64,
+                cost_currency="GBP",
+            ),
+            next_planned_dispatch=None,
+        ),
+    )
+    assert snapshot.latest_completed_dispatch is None
+
+
+def test_async_get_account_snapshot_ignores_past_planned_dispatches() -> None:
+    agreement_payload = {
+        "data": {
+            "account": {
+                "number": "A-TEST0001",
+                "electricityAgreements": [
+                    {
+                        "id": "agreement-current",
+                        "validFrom": "2026-04-01T00:00:00+00:00",
+                        "validTo": None,
+                        "meterPoint": {
+                            "mpan": "0012345678901",
+                            "unbilledReadings": [],
+                        },
+                        "tariff": {
+                            "__typename": "HalfHourlyTariff",
+                            "displayName": "Next Drive Smart V5.2",
+                            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+                            "standingCharge": 60.00015,
+                            "preVatStandingCharge": 57.143,
+                            "unitRates": [
+                                {
+                                    "value": 23.9022,
+                                    "validFrom": "2026-05-01T12:00:00+00:00",
+                                    "validTo": "2026-05-01T12:30:00+00:00",
+                                },
+                                {
+                                    "value": 24.5,
+                                    "validFrom": "2026-05-01T12:30:00+00:00",
+                                    "validTo": "2026-05-01T13:00:00+00:00",
+                                },
+                            ],
+                        },
+                    }
+                ],
+            }
+        }
+    }
+    session = _FakeSession(
+        [
+            _token_payload("access-1", "refresh-1", 2000000000),
+            _viewer_payload(),
+            agreement_payload,
+            agreement_payload,
+            _smartflex_devices_graphql_payload(_smartflex_vehicle_graphql_payload()),
+            _smartflex_planned_dispatches_graphql_payload(
+                {
+                    "start": "2026-05-01T11:30:00+00:00",
+                    "end": "2026-05-01T12:00:00+00:00",
+                    "type": "GRID_CHARGE",
+                    "energyAddedKwh": 1.1,
+                },
+                {
+                    "start": "2026-05-01T12:45:00+00:00",
+                    "end": "2026-05-01T13:15:00+00:00",
+                    "type": "GRID_CHARGE",
+                    "energyAddedKwh": 2.2,
+                },
+            ),
+            _smartflex_completed_dispatches_graphql_payload(),
+        ]
+    )
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    snapshot = asyncio.run(client.async_get_account_snapshot())
+
+    assert snapshot.smartflex_devices[0].next_planned_dispatch == SmartFlexPlannedDispatchSnapshot(
+        start=datetime(2026, 5, 1, 12, 45, tzinfo=UTC),
+        end=datetime(2026, 5, 1, 13, 15, tzinfo=UTC),
+        dispatch_type="GRID_CHARGE",
+        energy_added_kwh=2.2,
+    )
 
 
 def test_client_refreshes_stale_token_before_reuse() -> None:

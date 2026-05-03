@@ -54,3 +54,30 @@ ATTR_LATEST_GAS_METER_READING_REGISTER_DIGITS = (
 ATTR_LATEST_GAS_METER_READING_REGISTER_IS_QUARANTINED = (
     "latest_gas_meter_reading_register_is_quarantined"
 )
+ATTR_SMARTFLEX_DEVICE_ID = "smartflex_device_id"
+ATTR_SMARTFLEX_DEVICE_TYPE = "smartflex_device_type"
+ATTR_SMARTFLEX_PROVIDER = "smartflex_provider"
+ATTR_SMARTFLEX_INTEGRATION_DEVICE_ID = "smartflex_integration_device_id"
+ATTR_SMARTFLEX_PROPERTY_ID = "smartflex_property_id"
+ATTR_SMARTFLEX_MAKE = "smartflex_make"
+ATTR_SMARTFLEX_MODEL = "smartflex_model"
+ATTR_SMARTFLEX_LIFECYCLE_STATUS = "smartflex_lifecycle_status"
+ATTR_SMARTFLEX_IS_SUSPENDED = "smartflex_is_suspended"
+ATTR_SMARTFLEX_TEST_DISPATCH_FAILURE_REASON = "smartflex_test_dispatch_failure_reason"
+ATTR_SMARTFLEX_READING_TIMESTAMP = "smartflex_reading_timestamp"
+ATTR_SMARTFLEX_UPPER_SOC_LIMIT = "smartflex_upper_soc_limit"
+ATTR_SMARTFLEX_SOC_LIMIT_TIMESTAMP = "smartflex_soc_limit_timestamp"
+ATTR_SMARTFLEX_IS_SOC_LIMIT_VIOLATED = "smartflex_is_soc_limit_violated"
+ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_START = "smartflex_latest_charging_session_start"
+ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_END = "smartflex_latest_charging_session_end"
+ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_DELTA = (
+    "smartflex_latest_charging_session_soc_delta"
+)
+ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_FINAL = (
+    "smartflex_latest_charging_session_soc_final"
+)
+ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_START = "smartflex_next_planned_dispatch_start"
+ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_END = "smartflex_next_planned_dispatch_end"
+ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_TYPE = "smartflex_next_planned_dispatch_type"
+ATTR_SMARTFLEX_COMPLETED_DISPATCH_SOURCE = "smartflex_completed_dispatch_source"
+ATTR_SMARTFLEX_COMPLETED_DISPATCH_LOCATION = "smartflex_completed_dispatch_location"

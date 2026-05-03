@@ -44,6 +44,29 @@ from .const import (
     ATTR_LATEST_GAS_METER_READING_REGISTER_NAME,
     ATTR_LATEST_GAS_METER_READING_SOURCE,
     ATTR_LATEST_GAS_METER_READING_TYPE,
+    ATTR_SMARTFLEX_COMPLETED_DISPATCH_LOCATION,
+    ATTR_SMARTFLEX_COMPLETED_DISPATCH_SOURCE,
+    ATTR_SMARTFLEX_DEVICE_ID,
+    ATTR_SMARTFLEX_DEVICE_TYPE,
+    ATTR_SMARTFLEX_INTEGRATION_DEVICE_ID,
+    ATTR_SMARTFLEX_IS_SOC_LIMIT_VIOLATED,
+    ATTR_SMARTFLEX_IS_SUSPENDED,
+    ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_END,
+    ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_DELTA,
+    ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_FINAL,
+    ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_START,
+    ATTR_SMARTFLEX_LIFECYCLE_STATUS,
+    ATTR_SMARTFLEX_MAKE,
+    ATTR_SMARTFLEX_MODEL,
+    ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_END,
+    ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_START,
+    ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_TYPE,
+    ATTR_SMARTFLEX_PROPERTY_ID,
+    ATTR_SMARTFLEX_PROVIDER,
+    ATTR_SMARTFLEX_READING_TIMESTAMP,
+    ATTR_SMARTFLEX_SOC_LIMIT_TIMESTAMP,
+    ATTR_SMARTFLEX_TEST_DISPATCH_FAILURE_REASON,
+    ATTR_SMARTFLEX_UPPER_SOC_LIMIT,
     DOMAIN,
 )
 from .coordinator import EonNextRatesCoordinator
@@ -52,6 +75,10 @@ RATE_UNIT = "GBP/kWh"
 CHARGE_UNIT = "GBP/day"
 BALANCE_UNIT = "GBP"
 READING_UNIT = "kWh"
+POWER_UNIT = "kW"
+PERCENT_UNIT = "%"
+
+PathType = tuple[str, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -59,6 +86,21 @@ class EonRateSensorDescription(SensorEntityDescription):
     value_attr: str
     unique_id_suffix: str
     attribute_fields: dict[str, str] | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class SmartFlexDeviceSensorDescription(SensorEntityDescription):
+    value_path: PathType
+    unique_id_suffix: str
+    attribute_paths: dict[str, PathType] | None = None
+    native_unit_path: PathType | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class NestedAccountSensorDescription(SensorEntityDescription):
+    value_path: PathType
+    unique_id_suffix: str
+    attribute_paths: dict[str, PathType] | None = None
 
 
 SENSOR_DESCRIPTIONS = (
@@ -318,6 +360,208 @@ SENSOR_DESCRIPTIONS = (
     ),
 )
 
+SMARTFLEX_DEVICE_SENSOR_DESCRIPTIONS = (
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_current_state",
+        name="Current State",
+        value_path=("current_state",),
+        unique_id_suffix="current_state",
+        attribute_paths={
+            ATTR_SMARTFLEX_DEVICE_ID: ("device_id",),
+            ATTR_SMARTFLEX_DEVICE_TYPE: ("device_type",),
+            ATTR_SMARTFLEX_PROVIDER: ("provider",),
+            ATTR_SMARTFLEX_INTEGRATION_DEVICE_ID: ("integration_device_id",),
+            ATTR_SMARTFLEX_PROPERTY_ID: ("property_id",),
+            ATTR_SMARTFLEX_MAKE: ("make",),
+            ATTR_SMARTFLEX_MODEL: ("model",),
+            ATTR_SMARTFLEX_LIFECYCLE_STATUS: ("lifecycle_status",),
+            ATTR_SMARTFLEX_IS_SUSPENDED: ("is_suspended",),
+            ATTR_SMARTFLEX_TEST_DISPATCH_FAILURE_REASON: (
+                "test_dispatch_failure_reason",
+            ),
+        },
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_state_of_charge",
+        name="State Of Charge",
+        native_unit_of_measurement=PERCENT_UNIT,
+        value_path=("state_of_charge", "value"),
+        unique_id_suffix="state_of_charge",
+        attribute_paths={
+            ATTR_SMARTFLEX_READING_TIMESTAMP: ("state_of_charge", "timestamp"),
+            ATTR_SMARTFLEX_UPPER_SOC_LIMIT: ("state_of_charge_limit", "upper_soc_limit"),
+            ATTR_SMARTFLEX_SOC_LIMIT_TIMESTAMP: (
+                "state_of_charge_limit",
+                "timestamp",
+            ),
+            ATTR_SMARTFLEX_IS_SOC_LIMIT_VIOLATED: (
+                "state_of_charge_limit",
+                "is_limit_violated",
+            ),
+        },
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_active_power",
+        name="Active Power",
+        native_unit_of_measurement=POWER_UNIT,
+        value_path=("active_power", "value"),
+        unique_id_suffix="active_power",
+        attribute_paths={
+            ATTR_SMARTFLEX_READING_TIMESTAMP: ("active_power", "timestamp"),
+        },
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_battery_size",
+        name="Battery Size",
+        native_unit_of_measurement=READING_UNIT,
+        value_path=("vehicle_battery_size_kwh",),
+        unique_id_suffix="battery_size",
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_charge_point_power_output",
+        name="Charge Point Power Output",
+        native_unit_of_measurement=POWER_UNIT,
+        value_path=("charge_point_power_output_kw",),
+        unique_id_suffix="charge_point_power_output",
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_latest_charging_session_start",
+        name="Latest Charging Session Start",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_path=("latest_charging_session", "start"),
+        unique_id_suffix="latest_charging_session_start",
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_latest_charging_session_end",
+        name="Latest Charging Session End",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_path=("latest_charging_session", "end"),
+        unique_id_suffix="latest_charging_session_end",
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_latest_charging_session_energy_added",
+        name="Latest Charging Session Energy Added",
+        value_path=("latest_charging_session", "energy_added_value"),
+        unique_id_suffix="latest_charging_session_energy_added",
+        native_unit_path=("latest_charging_session", "energy_added_unit"),
+        attribute_paths={
+            ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_START: (
+                "latest_charging_session",
+                "start",
+            ),
+            ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_END: (
+                "latest_charging_session",
+                "end",
+            ),
+            ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_DELTA: (
+                "latest_charging_session",
+                "state_of_charge_change",
+            ),
+            ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_FINAL: (
+                "latest_charging_session",
+                "state_of_charge_final",
+            ),
+        },
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_latest_charging_session_cost",
+        name="Latest Charging Session Cost",
+        value_path=("latest_charging_session", "cost_amount"),
+        unique_id_suffix="latest_charging_session_cost",
+        native_unit_path=("latest_charging_session", "cost_currency"),
+        attribute_paths={
+            ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_START: (
+                "latest_charging_session",
+                "start",
+            ),
+            ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_END: (
+                "latest_charging_session",
+                "end",
+            ),
+            ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_DELTA: (
+                "latest_charging_session",
+                "state_of_charge_change",
+            ),
+            ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_FINAL: (
+                "latest_charging_session",
+                "state_of_charge_final",
+            ),
+        },
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_next_planned_dispatch_start",
+        name="Next Planned Dispatch Start",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_path=("next_planned_dispatch", "start"),
+        unique_id_suffix="next_planned_dispatch_start",
+        attribute_paths={
+            ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_END: (
+                "next_planned_dispatch",
+                "end",
+            ),
+            ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_TYPE: (
+                "next_planned_dispatch",
+                "dispatch_type",
+            ),
+        },
+    ),
+    SmartFlexDeviceSensorDescription(
+        key="smartflex_next_planned_dispatch_energy_added",
+        name="Next Planned Dispatch Energy Added",
+        native_unit_of_measurement=READING_UNIT,
+        value_path=("next_planned_dispatch", "energy_added_kwh"),
+        unique_id_suffix="next_planned_dispatch_energy_added",
+        attribute_paths={
+            ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_START: (
+                "next_planned_dispatch",
+                "start",
+            ),
+            ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_END: (
+                "next_planned_dispatch",
+                "end",
+            ),
+            ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_TYPE: (
+                "next_planned_dispatch",
+                "dispatch_type",
+            ),
+        },
+    ),
+)
+
+SMARTFLEX_ACCOUNT_SENSOR_DESCRIPTIONS = (
+    NestedAccountSensorDescription(
+        key="smartflex_latest_completed_dispatch_start",
+        name="E.ON Latest SmartFlex Completed Dispatch Start",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_path=("latest_completed_dispatch", "start"),
+        unique_id_suffix="smartflex_latest_completed_dispatch_start",
+    ),
+    NestedAccountSensorDescription(
+        key="smartflex_latest_completed_dispatch_end",
+        name="E.ON Latest SmartFlex Completed Dispatch End",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_path=("latest_completed_dispatch", "end"),
+        unique_id_suffix="smartflex_latest_completed_dispatch_end",
+    ),
+    NestedAccountSensorDescription(
+        key="smartflex_latest_completed_dispatch_delta",
+        name="E.ON Latest SmartFlex Completed Dispatch Delta",
+        native_unit_of_measurement=READING_UNIT,
+        value_path=("latest_completed_dispatch", "delta"),
+        unique_id_suffix="smartflex_latest_completed_dispatch_delta",
+        attribute_paths={
+            ATTR_SMARTFLEX_COMPLETED_DISPATCH_SOURCE: (
+                "latest_completed_dispatch",
+                "source",
+            ),
+            ATTR_SMARTFLEX_COMPLETED_DISPATCH_LOCATION: (
+                "latest_completed_dispatch",
+                "location",
+            ),
+        },
+    ),
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -325,16 +569,89 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: EonNextRatesCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities(_build_sensors(entry.entry_id, coordinator))
+    initial_entities = _build_sensors(entry.entry_id, coordinator)
+    async_add_entities(initial_entities)
+
+    known_unique_ids = {entity.unique_id for entity in initial_entities}
+
+    def _async_add_new_smartflex_entities() -> None:
+        new_entities = _build_new_smartflex_sensors(
+            entry.entry_id,
+            coordinator,
+            known_unique_ids,
+        )
+        if not new_entities:
+            return
+
+        known_unique_ids.update(entity.unique_id for entity in new_entities)
+        async_add_entities(new_entities)
+
+    entry.async_on_unload(coordinator.async_add_listener(_async_add_new_smartflex_entities))
 
 
 def _build_sensors(
     entry_id: str, coordinator: EonNextRatesCoordinator
-) -> list[EonNextRatesSensor]:
-    return [
+) -> list[SensorEntity]:
+    sensors: list[SensorEntity] = [
         EonNextRatesSensor(entry_id, coordinator, description)
         for description in SENSOR_DESCRIPTIONS
     ]
+
+    sensors.extend(_build_smartflex_sensors(entry_id, coordinator))
+
+    return sensors
+
+
+def _build_new_smartflex_sensors(
+    entry_id: str,
+    coordinator: EonNextRatesCoordinator,
+    existing_unique_ids: set[str | None],
+) -> list[SensorEntity]:
+    return [
+        entity
+        for entity in _build_smartflex_sensors(entry_id, coordinator)
+        if entity.unique_id not in existing_unique_ids
+    ]
+
+
+def _build_smartflex_sensors(
+    entry_id: str, coordinator: EonNextRatesCoordinator
+) -> list[SensorEntity]:
+    sensors: list[SensorEntity] = []
+
+    snapshot: AccountSnapshot | None = coordinator.data
+    if snapshot is None:
+        return sensors
+
+    for device in snapshot.smartflex_devices:
+        sensors.extend(
+            SmartFlexDeviceSensor(entry_id, coordinator, device.device_id, description)
+            for description in SMARTFLEX_DEVICE_SENSOR_DESCRIPTIONS
+        )
+
+    if snapshot.latest_completed_dispatch is not None:
+        sensors.extend(
+            SmartFlexAccountSensor(entry_id, coordinator, description)
+            for description in SMARTFLEX_ACCOUNT_SENSOR_DESCRIPTIONS
+        )
+
+    return sensors
+
+
+def _resolve_path(value: Any, path: PathType) -> Any:
+    current = value
+    for segment in path:
+        if current is None:
+            return None
+        if isinstance(current, dict):
+            current = current.get(segment)
+            continue
+        current = getattr(current, segment, None)
+    return current
+
+
+def _device_unique_id_fragment(device_id: str) -> str:
+    return device_id
 
 
 class EonNextRatesSensor(CoordinatorEntity, SensorEntity):
@@ -371,4 +688,91 @@ class EonNextRatesSensor(CoordinatorEntity, SensorEntity):
         return {
             attribute_name: getattr(snapshot, snapshot_attr)
             for attribute_name, snapshot_attr in attribute_fields.items()
+        }
+
+
+class SmartFlexDeviceSensor(CoordinatorEntity, SensorEntity):
+    entity_description: SmartFlexDeviceSensorDescription
+
+    def __init__(
+        self,
+        entry_id: str,
+        coordinator: EonNextRatesCoordinator,
+        device_id: str,
+        description: SmartFlexDeviceSensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._device_id = device_id
+        self._attr_unique_id = (
+            f"{entry_id}_smartflex_{_device_unique_id_fragment(device_id)}_"
+            f"{description.unique_id_suffix}"
+        )
+
+    @property
+    def name(self) -> str:
+        device_name = _resolve_path(self._device_snapshot, ("name",)) or self._device_id
+        return f"E.ON {device_name} {self.entity_description.name}"
+
+    @property
+    def native_value(self) -> float | str | datetime | None:
+        return _resolve_path(self._device_snapshot, self.entity_description.value_path)
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        native_unit_path = self.entity_description.native_unit_path
+        if native_unit_path is not None:
+            return _resolve_path(self._device_snapshot, native_unit_path)
+        return self.entity_description.native_unit_of_measurement
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        attribute_paths = self.entity_description.attribute_paths
+        if attribute_paths is None:
+            return None
+
+        return {
+            attribute_name: _resolve_path(self._device_snapshot, path)
+            for attribute_name, path in attribute_paths.items()
+        }
+
+    @property
+    def _device_snapshot(self) -> Any:
+        snapshot: AccountSnapshot | None = self.coordinator.data
+        if snapshot is None:
+            return None
+
+        for device in snapshot.smartflex_devices:
+            if device.device_id == self._device_id:
+                return device
+
+        return None
+
+
+class SmartFlexAccountSensor(CoordinatorEntity, SensorEntity):
+    entity_description: NestedAccountSensorDescription
+
+    def __init__(
+        self,
+        entry_id: str,
+        coordinator: EonNextRatesCoordinator,
+        description: NestedAccountSensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{entry_id}_{description.unique_id_suffix}"
+
+    @property
+    def native_value(self) -> float | str | datetime | None:
+        return _resolve_path(self.coordinator.data, self.entity_description.value_path)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        attribute_paths = self.entity_description.attribute_paths
+        if attribute_paths is None:
+            return None
+
+        return {
+            attribute_name: _resolve_path(self.coordinator.data, path)
+            for attribute_name, path in attribute_paths.items()
         }
