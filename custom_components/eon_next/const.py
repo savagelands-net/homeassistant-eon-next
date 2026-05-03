@@ -79,5 +79,3 @@ ATTR_SMARTFLEX_LATEST_CHARGING_SESSION_SOC_FINAL = (
 ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_START = "smartflex_next_planned_dispatch_start"
 ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_END = "smartflex_next_planned_dispatch_end"
 ATTR_SMARTFLEX_NEXT_PLANNED_DISPATCH_TYPE = "smartflex_next_planned_dispatch_type"
-ATTR_SMARTFLEX_COMPLETED_DISPATCH_SOURCE = "smartflex_completed_dispatch_source"
-ATTR_SMARTFLEX_COMPLETED_DISPATCH_LOCATION = "smartflex_completed_dispatch_location"

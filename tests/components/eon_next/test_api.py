@@ -18,7 +18,6 @@ from custom_components.eon_next.api import (
     EonNextRatesClient,
     EonNextRatesUnsupportedError,
     SmartFlexChargingSessionSnapshot,
-    SmartFlexCompletedDispatchSnapshot,
     SmartFlexDeviceSnapshot,
     SmartFlexPlannedDispatchSnapshot,
     SmartFlexReadingSnapshot,
@@ -27,7 +26,6 @@ from custom_components.eon_next.api import (
     build_smartflex_device_snapshot,
     select_account_number,
     select_active_half_hourly_agreement,
-    select_latest_completed_dispatch,
     select_next_planned_dispatch,
 )
 
@@ -283,25 +281,6 @@ def _smartflex_planned_dispatch_payload(
         "dispatchType": dispatch_type,
         "energyAddedKwh": energy_added_kwh,
     }
-
-
-def _smartflex_completed_dispatch_payload(
-    *,
-    start: str,
-    end: str,
-    delta: float,
-    source: str,
-    location: str,
-) -> dict[str, Any]:
-    return {
-        "start": start,
-        "end": end,
-        "delta": delta,
-        "source": source,
-        "location": location,
-    }
-
-
 def _smartflex_charging_session_payload(
     *,
     start: str,
@@ -349,7 +328,6 @@ def _smartflex_device_payload(
     state_of_charge_limit: dict[str, Any] | None | object = _UNSET,
     test_dispatch_failure_reason: str | None = None,
     sessions: list[dict[str, Any]] | None = None,
-    completed_dispatches: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "id": device_id,
@@ -386,7 +364,6 @@ def _smartflex_device_payload(
         ),
         "testDispatchFailureReason": test_dispatch_failure_reason,
         "chargingSessions": sessions or [],
-        "completedDispatches": completed_dispatches or [],
     }
 
 
@@ -398,12 +375,6 @@ def _smartflex_planned_dispatches_graphql_payload(
     *dispatches: dict[str, Any],
 ) -> dict[str, Any]:
     return {"data": {"flexPlannedDispatches": list(dispatches)}}
-
-
-def _smartflex_completed_dispatches_graphql_payload(
-    *dispatches: dict[str, Any],
-) -> dict[str, Any]:
-    return {"data": {"completedDispatches": list(dispatches)}}
 
 
 def _smartflex_graphql_charging_session_payload(
@@ -618,8 +589,6 @@ def test_smartflex_devices_query_uses_status_inline_fragments() -> None:
     assert "testDispatchFailureReason" not in top_level_status_block
     assert "... on SmartFlexVehicleStatus {" in status_block
     assert "... on SmartFlexChargePointStatus {" in status_block
-
-
 def test_build_account_snapshot_parses_live_shaped_statement_transactions() -> None:
     agreement = _agreement_payload_with_meter_readings()
     account = _account_payload(
@@ -755,7 +724,6 @@ def test_build_account_snapshot_defaults_smartflex_surfaces_to_empty() -> None:
     )
 
     assert snapshot.smartflex_devices == ()
-    assert snapshot.latest_completed_dispatch is None
 
 
 def test_build_smartflex_device_snapshot_selects_latest_session_and_planned_dispatch() -> None:
@@ -912,59 +880,6 @@ def test_select_active_half_hourly_agreement_preserves_fail_fast_invalid_datetim
             },
             datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
         )
-
-
-def test_select_latest_completed_dispatch_uses_most_recent_dispatch() -> None:
-    completed_dispatches = [
-        _smartflex_completed_dispatch_payload(
-            start="2026-05-01T18:00:00+00:00",
-            end="2026-05-01T18:30:00+00:00",
-            delta=2.2,
-            source="GRID",
-            location="HOME",
-        ),
-        _smartflex_completed_dispatch_payload(
-            start="2026-05-01T19:00:00+00:00",
-            end="2026-05-01T20:00:00+00:00",
-            delta=3.8,
-            source="GRID",
-            location="HOME",
-        ),
-    ]
-
-    assert select_latest_completed_dispatch(
-        completed_dispatches
-    ) == SmartFlexCompletedDispatchSnapshot(
-        start=datetime(2026, 5, 1, 19, 0, tzinfo=UTC),
-        end=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
-        delta=3.8,
-        source="GRID",
-        location="HOME",
-    )
-
-
-def test_select_latest_completed_dispatch_ignores_malformed_containers_and_members() -> None:
-    assert select_latest_completed_dispatch("not-a-list") is None
-
-    assert select_latest_completed_dispatch(
-        [
-            "not-a-dict",
-            42,
-            _smartflex_completed_dispatch_payload(
-                start="2026-05-01T19:00:00+00:00",
-                end="2026-05-01T20:00:00+00:00",
-                delta=3.8,
-                source="GRID",
-                location="HOME",
-            ),
-        ]
-    ) == SmartFlexCompletedDispatchSnapshot(
-        start=datetime(2026, 5, 1, 19, 0, tzinfo=UTC),
-        end=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
-        delta=3.8,
-        source="GRID",
-        location="HOME",
-    )
 
 
 def test_build_smartflex_device_snapshot_ignores_malformed_charging_sessions_collection() -> None:
@@ -1717,7 +1632,6 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
             agreement_payload,
             agreement_payload,
             _smartflex_devices_graphql_payload(),
-            _smartflex_completed_dispatches_graphql_payload(),
         ]
     )
     client = EonNextRatesClient(
@@ -1783,15 +1697,21 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
     assert "bills(first: 1, orderBy: ISSUED_DATE_DESC)" in session.requests[3]["json"]["query"]
     assert session.requests[3]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert session.requests[4]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
-    assert session.requests[5]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
+    assert len(session.requests) == 5
     assert snapshot.current_account_balance_gbp == 123.45
     assert snapshot.latest_statement_closing_balance_gbp == 98.76
     assert snapshot.latest_statement_charges_gbp == 54.32
     assert snapshot.gas_rate_gbp_per_kwh == 0.06543
     assert snapshot.gas_meter_point_mprn == "1234567890"
+    assert not hasattr(snapshot, "latest_completed_dispatch")
+    assert all(
+        "completedDispatches(accountNumber: $accountNumber)"
+        not in request["json"]["query"]
+        for request in session.requests
+    )
 
 
-def test_async_get_account_snapshot_includes_smartflex_devices_and_latest_completed_dispatch(
+def test_async_get_account_snapshot_includes_smartflex_devices_and_planned_dispatches(
 ) -> None:
     agreement_payload = {
         "data": {
@@ -1888,20 +1808,6 @@ def test_async_get_account_snapshot_includes_smartflex_devices_and_latest_comple
                     "type": "GRID_CHARGE",
                     "energyAddedKwh": 3.3,
                 }
-            ),
-            _smartflex_completed_dispatches_graphql_payload(
-                {
-                    "start": "2026-05-01T18:00:00+00:00",
-                    "end": "2026-05-01T18:30:00+00:00",
-                    "delta": 2.2,
-                    "meta": {"source": "GRID", "location": "HOME"},
-                },
-                {
-                    "start": "2026-05-01T19:00:00+00:00",
-                    "end": "2026-05-01T20:00:00+00:00",
-                    "delta": 3.8,
-                    "meta": {"source": "GRID", "location": "HOME"},
-                },
             ),
         ]
     )
@@ -2005,26 +1911,22 @@ def test_async_get_account_snapshot_includes_smartflex_devices_and_latest_comple
             energy_added_kwh=3.3,
         ),
     )
-    assert snapshot.latest_completed_dispatch == SmartFlexCompletedDispatchSnapshot(
-        start=datetime(2026, 5, 1, 19, 0, tzinfo=UTC),
-        end=datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
-        delta=3.8,
-        source="GRID",
-        location="HOME",
-    )
     assert session.requests[4]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert "devices(accountNumber: $accountNumber)" in session.requests[4]["json"]["query"]
     assert "deviceType" in session.requests[4]["json"]["query"]
     assert session.requests[5]["json"]["variables"] == {"deviceId": "vehicle-1"}
     assert "flexPlannedDispatches(deviceId: $deviceId)" in session.requests[5]["json"]["query"]
     assert session.requests[6]["json"]["variables"] == {"deviceId": "charger-1"}
-    assert session.requests[7]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
-    assert "completedDispatches(accountNumber: $accountNumber)" in session.requests[7][
-        "json"
-    ]["query"]
+    assert len(session.requests) == 7
+    assert not hasattr(snapshot, "latest_completed_dispatch")
+    assert all(
+        "completedDispatches(accountNumber: $accountNumber)"
+        not in request["json"]["query"]
+        for request in session.requests
+    )
 
 
-def test_async_get_account_snapshot_ignores_optional_smartflex_query_failures() -> None:
+def test_async_get_account_snapshot_ignores_optional_planned_dispatch_query_failures() -> None:
     agreement_payload = {
         "data": {
             "account": {
@@ -2086,7 +1988,6 @@ def test_async_get_account_snapshot_ignores_optional_smartflex_query_failures() 
                 )
             ),
             _graphql_error_payload("Planned dispatch query failed"),
-            _graphql_error_payload("Completed dispatch query failed"),
         ]
     )
     client = EonNextRatesClient(
@@ -2142,7 +2043,165 @@ def test_async_get_account_snapshot_ignores_optional_smartflex_query_failures() 
             next_planned_dispatch=None,
         ),
     )
-    assert snapshot.latest_completed_dispatch is None
+    assert len(session.requests) == 6
+    assert not hasattr(snapshot, "latest_completed_dispatch")
+    assert all(
+        "completedDispatches(accountNumber: $accountNumber)"
+        not in request["json"]["query"]
+        for request in session.requests
+    )
+
+
+def test_async_get_account_snapshot_returns_no_smartflex_devices_when_devices_query_fails() -> None:
+    agreement_payload = {
+        "data": {
+            "account": {
+                "number": "A-TEST0001",
+                "electricityAgreements": [
+                    {
+                        "id": "agreement-current",
+                        "validFrom": "2026-04-01T00:00:00+00:00",
+                        "validTo": None,
+                        "meterPoint": {
+                            "mpan": "0012345678901",
+                            "unbilledReadings": [],
+                        },
+                        "tariff": {
+                            "__typename": "HalfHourlyTariff",
+                            "displayName": "Next Drive Smart V5.2",
+                            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+                            "standingCharge": 60.00015,
+                            "preVatStandingCharge": 57.143,
+                            "unitRates": [
+                                {
+                                    "value": 23.9022,
+                                    "validFrom": "2026-05-01T12:00:00+00:00",
+                                    "validTo": "2026-05-01T12:30:00+00:00",
+                                },
+                                {
+                                    "value": 24.5,
+                                    "validFrom": "2026-05-01T12:30:00+00:00",
+                                    "validTo": "2026-05-01T13:00:00+00:00",
+                                },
+                            ],
+                        },
+                    }
+                ],
+            }
+        }
+    }
+    session = _FakeSession(
+        [
+            _token_payload("access-1", "refresh-1", 2000000000),
+            _viewer_payload(),
+            agreement_payload,
+            agreement_payload,
+            _graphql_error_payload("Devices query failed"),
+        ]
+    )
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    snapshot = asyncio.run(client.async_get_account_snapshot())
+
+    assert snapshot.account_number == "A-TEST0001"
+    assert snapshot.current_rate_gbp_per_kwh == 0.239022
+    assert snapshot.smartflex_devices == ()
+    assert len(session.requests) == 5
+    assert not hasattr(snapshot, "latest_completed_dispatch")
+    assert all(
+        "completedDispatches(accountNumber: $accountNumber)"
+        not in request["json"]["query"]
+        for request in session.requests
+    )
+
+
+def test_async_get_account_snapshot_uses_single_snapshot_time_for_planned_dispatch_filtering(
+) -> None:
+    agreement_payload = {
+        "data": {
+            "account": {
+                "number": "A-TEST0001",
+                "electricityAgreements": [
+                    {
+                        "id": "agreement-current",
+                        "validFrom": "2026-04-01T00:00:00+00:00",
+                        "validTo": None,
+                        "meterPoint": {
+                            "mpan": "0012345678901",
+                            "unbilledReadings": [],
+                        },
+                        "tariff": {
+                            "__typename": "HalfHourlyTariff",
+                            "displayName": "Next Drive Smart V5.2",
+                            "tariffCode": "E-TOU-NEXT_DRIVE_SMART_V5_2-N",
+                            "standingCharge": 60.00015,
+                            "preVatStandingCharge": 57.143,
+                            "unitRates": [
+                                {
+                                    "value": 23.9022,
+                                    "validFrom": "2026-05-01T12:00:00+00:00",
+                                    "validTo": "2026-05-01T12:30:00+00:00",
+                                },
+                                {
+                                    "value": 24.5,
+                                    "validFrom": "2026-05-01T12:30:00+00:00",
+                                    "validTo": "2026-05-01T13:00:00+00:00",
+                                },
+                            ],
+                        },
+                    }
+                ],
+            }
+        }
+    }
+    session = _FakeSession(
+        [
+            agreement_payload,
+            _smartflex_devices_graphql_payload(_smartflex_vehicle_graphql_payload()),
+            _smartflex_planned_dispatches_graphql_payload(
+                {
+                    "start": "2026-05-01T12:30:00+00:00",
+                    "end": "2026-05-01T13:00:00+00:00",
+                    "type": "GRID_CHARGE",
+                    "energyAddedKwh": 2.2,
+                }
+            ),
+        ]
+    )
+    now_calls = 0
+
+    def _moving_now() -> datetime:
+        nonlocal now_calls
+        now_calls += 1
+        if now_calls <= 4:
+            return datetime(2026, 5, 1, 12, 15, tzinfo=UTC)
+
+        return datetime(2026, 5, 1, 12, 45, tzinfo=UTC)
+
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        account_number="A-TEST0001",
+        now=_moving_now,
+    )
+    client._token = "access-1"
+    client._token_expires_at = datetime(2026, 5, 1, 13, 0, tzinfo=UTC)
+
+    snapshot = asyncio.run(client.async_get_account_snapshot())
+
+    assert snapshot.smartflex_devices[0].next_planned_dispatch == SmartFlexPlannedDispatchSnapshot(
+        start=datetime(2026, 5, 1, 12, 30, tzinfo=UTC),
+        end=datetime(2026, 5, 1, 13, 0, tzinfo=UTC),
+        dispatch_type="GRID_CHARGE",
+        energy_added_kwh=2.2,
+    )
+    assert now_calls == 4
 
 
 def test_async_get_account_snapshot_ignores_past_planned_dispatches() -> None:
@@ -2204,7 +2263,6 @@ def test_async_get_account_snapshot_ignores_past_planned_dispatches() -> None:
                     "energyAddedKwh": 2.2,
                 },
             ),
-            _smartflex_completed_dispatches_graphql_payload(),
         ]
     )
     client = EonNextRatesClient(

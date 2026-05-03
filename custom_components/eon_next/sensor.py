@@ -44,8 +44,6 @@ from .const import (
     ATTR_LATEST_GAS_METER_READING_REGISTER_NAME,
     ATTR_LATEST_GAS_METER_READING_SOURCE,
     ATTR_LATEST_GAS_METER_READING_TYPE,
-    ATTR_SMARTFLEX_COMPLETED_DISPATCH_LOCATION,
-    ATTR_SMARTFLEX_COMPLETED_DISPATCH_SOURCE,
     ATTR_SMARTFLEX_DEVICE_ID,
     ATTR_SMARTFLEX_DEVICE_TYPE,
     ATTR_SMARTFLEX_INTEGRATION_DEVICE_ID,
@@ -94,13 +92,6 @@ class SmartFlexDeviceSensorDescription(SensorEntityDescription):
     unique_id_suffix: str
     attribute_paths: dict[str, PathType] | None = None
     native_unit_path: PathType | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class NestedAccountSensorDescription(SensorEntityDescription):
-    value_path: PathType
-    unique_id_suffix: str
-    attribute_paths: dict[str, PathType] | None = None
 
 
 SENSOR_DESCRIPTIONS = (
@@ -528,40 +519,6 @@ SMARTFLEX_DEVICE_SENSOR_DESCRIPTIONS = (
     ),
 )
 
-SMARTFLEX_ACCOUNT_SENSOR_DESCRIPTIONS = (
-    NestedAccountSensorDescription(
-        key="smartflex_latest_completed_dispatch_start",
-        name="E.ON Latest SmartFlex Completed Dispatch Start",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        value_path=("latest_completed_dispatch", "start"),
-        unique_id_suffix="smartflex_latest_completed_dispatch_start",
-    ),
-    NestedAccountSensorDescription(
-        key="smartflex_latest_completed_dispatch_end",
-        name="E.ON Latest SmartFlex Completed Dispatch End",
-        device_class=SensorDeviceClass.TIMESTAMP,
-        value_path=("latest_completed_dispatch", "end"),
-        unique_id_suffix="smartflex_latest_completed_dispatch_end",
-    ),
-    NestedAccountSensorDescription(
-        key="smartflex_latest_completed_dispatch_delta",
-        name="E.ON Latest SmartFlex Completed Dispatch Delta",
-        native_unit_of_measurement=READING_UNIT,
-        value_path=("latest_completed_dispatch", "delta"),
-        unique_id_suffix="smartflex_latest_completed_dispatch_delta",
-        attribute_paths={
-            ATTR_SMARTFLEX_COMPLETED_DISPATCH_SOURCE: (
-                "latest_completed_dispatch",
-                "source",
-            ),
-            ATTR_SMARTFLEX_COMPLETED_DISPATCH_LOCATION: (
-                "latest_completed_dispatch",
-                "location",
-            ),
-        },
-    ),
-)
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -628,13 +585,6 @@ def _build_smartflex_sensors(
             SmartFlexDeviceSensor(entry_id, coordinator, device.device_id, description)
             for description in SMARTFLEX_DEVICE_SENSOR_DESCRIPTIONS
             if _resolve_path(device, description.value_path) is not None
-        )
-
-    if snapshot.latest_completed_dispatch is not None:
-        sensors.extend(
-            SmartFlexAccountSensor(entry_id, coordinator, description)
-            for description in SMARTFLEX_ACCOUNT_SENSOR_DESCRIPTIONS
-            if _resolve_path(snapshot, description.value_path) is not None
         )
 
     return sensors
@@ -749,32 +699,3 @@ class SmartFlexDeviceSensor(CoordinatorEntity, SensorEntity):
                 return device
 
         return None
-
-
-class SmartFlexAccountSensor(CoordinatorEntity, SensorEntity):
-    entity_description: NestedAccountSensorDescription
-
-    def __init__(
-        self,
-        entry_id: str,
-        coordinator: EonNextRatesCoordinator,
-        description: NestedAccountSensorDescription,
-    ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{entry_id}_{description.unique_id_suffix}"
-
-    @property
-    def native_value(self) -> float | str | datetime | None:
-        return _resolve_path(self.coordinator.data, self.entity_description.value_path)
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
-        attribute_paths = self.entity_description.attribute_paths
-        if attribute_paths is None:
-            return None
-
-        return {
-            attribute_name: _resolve_path(self.coordinator.data, path)
-            for attribute_name, path in attribute_paths.items()
-        }
