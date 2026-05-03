@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -77,6 +78,11 @@ POWER_UNIT = "kW"
 PERCENT_UNIT = "%"
 
 PathType = tuple[str, ...]
+LEGACY_SMARTFLEX_COMPLETED_DISPATCH_SUFFIXES = (
+    "smartflex_latest_completed_dispatch_start",
+    "smartflex_latest_completed_dispatch_end",
+    "smartflex_latest_completed_dispatch_delta",
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -519,13 +525,13 @@ SMARTFLEX_DEVICE_SENSOR_DESCRIPTIONS = (
     ),
 )
 
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: EonNextRatesCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    _remove_legacy_smartflex_completed_dispatch_entities(hass, entry.entry_id)
     initial_entities = _build_sensors(entry.entry_id, coordinator)
     async_add_entities(initial_entities)
 
@@ -544,6 +550,17 @@ async def async_setup_entry(
         async_add_entities(new_entities)
 
     entry.async_on_unload(coordinator.async_add_listener(_async_add_new_smartflex_entities))
+
+
+def _remove_legacy_smartflex_completed_dispatch_entities(
+    hass: HomeAssistant, entry_id: str
+) -> None:
+    registry = entity_registry.async_get(hass)
+
+    for suffix in LEGACY_SMARTFLEX_COMPLETED_DISPATCH_SUFFIXES:
+        unique_id = f"{entry_id}_{suffix}"
+        if entity_id := registry.async_get_entity_id("sensor", DOMAIN, unique_id):
+            registry.async_remove(entity_id)
 
 
 def _build_sensors(

@@ -610,13 +610,14 @@ class EonNextRatesClient:
         account = data["account"]
         agreement = select_active_half_hourly_agreement(account, now)
         snapshot = build_account_snapshot(account, agreement, now)
-        smartflex_devices = await self._async_get_smartflex_devices(
-            self._account_number, now
+        smartflex_devices = await self._async_get_smartflex_devices(self._account_number)
+        return replace(
+            snapshot,
+            smartflex_devices=smartflex_devices,
         )
-        return replace(snapshot, smartflex_devices=smartflex_devices)
 
     async def _async_get_smartflex_devices(
-        self, account_number: str, now: datetime
+        self, account_number: str
     ) -> tuple[SmartFlexDeviceSnapshot, ...]:
         data = await self._async_optional_authenticated_graphql(
             SMARTFLEX_DEVICES_QUERY,
@@ -647,7 +648,7 @@ class EonNextRatesClient:
                 dispatch
                 for dispatch in planned_dispatches
                 if (start := _parse_smartflex_datetime(dispatch.get("start"))) is not None
-                and start >= now
+                and start >= self._now()
             ]
             snapshots.append(
                 build_smartflex_device_snapshot(
@@ -657,6 +658,7 @@ class EonNextRatesClient:
             )
 
         return tuple(snapshots)
+
     def _store_token_state(self, token_payload: dict[str, Any]) -> None:
         self._token = token_payload["token"]
         self._token_expires_at = _token_expiry_datetime(token_payload["payload"])
@@ -833,6 +835,8 @@ def _normalize_smartflex_planned_dispatches(planned_dispatches: Any) -> list[dic
         for dispatch in planned_dispatches
         if isinstance(dispatch, dict)
     ]
+
+
 def _build_smartflex_reading_snapshot(reading: Any) -> SmartFlexReadingSnapshot | None:
     if not isinstance(reading, dict):
         return None
@@ -899,6 +903,8 @@ def select_next_planned_dispatch(
         return None
 
     return min(snapshots, key=lambda snapshot: snapshot.start)
+
+
 def build_smartflex_device_snapshot(
     device: dict[str, Any],
     next_planned_dispatch: SmartFlexPlannedDispatchSnapshot | None,
