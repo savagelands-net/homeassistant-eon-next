@@ -42,7 +42,10 @@ async def validate_input(hass: HomeAssistant, data: dict[str, str]) -> dict[str,
     }
 
 
-class EonNextRatesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class EonNextRatesConfigFlow(  # pyright: ignore[reportGeneralTypeIssues]
+    config_entries.ConfigFlow,
+    domain=DOMAIN,  # pyright: ignore[reportCallIssue]
+):
     VERSION = 1
 
     async def async_step_user(self, user_input: dict[str, str] | None = None) -> dict[str, Any]:
@@ -61,12 +64,17 @@ class EonNextRatesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "account_number": info["account_number"],
                     },
                 )
-            except EonNextRatesAuthError:
-                errors["base"] = "invalid_auth"
-            except EonNextRatesConnectionError:
-                errors["base"] = "cannot_connect"
-            except EonNextRatesUnsupportedError:
-                errors["base"] = "unsupported_tariff"
+            except (
+                EonNextRatesAuthError,
+                EonNextRatesConnectionError,
+                EonNextRatesUnsupportedError,
+            ) as err:
+                if isinstance(err, EonNextRatesAuthError):
+                    errors["base"] = "invalid_auth"
+                elif isinstance(err, EonNextRatesConnectionError):
+                    errors["base"] = "cannot_connect"
+                else:
+                    errors["base"] = "unsupported_tariff"
 
         return self.async_show_form(
             step_id="user",

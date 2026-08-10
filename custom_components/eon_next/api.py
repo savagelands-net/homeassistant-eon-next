@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from aiohttp import ClientError
+from aiohttp import ClientError  # pyright: ignore[reportMissingImports]
 
 from .const import GRAPHQL_URL
 
@@ -254,8 +254,7 @@ SMARTFLEX_DEVICES_QUERY = """query SmartFlexDevices($accountNumber: String!) {
   }
 }"""
 
-SMARTFLEX_PLANNED_DISPATCHES_QUERY = (
-    """query SmartFlexPlannedDispatches($deviceId: String!) {
+SMARTFLEX_PLANNED_DISPATCHES_QUERY = """query SmartFlexPlannedDispatches($deviceId: String!) {
   flexPlannedDispatches(deviceId: $deviceId) {
     start
     end
@@ -263,7 +262,6 @@ SMARTFLEX_PLANNED_DISPATCHES_QUERY = (
     energyAddedKwh
   }
 }"""
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,14 +396,10 @@ class EonNextRatesUnsupportedError(EonNextRatesError):
     pass
 
 
-def select_account_number(
-    viewer: dict, supported_account_numbers: set[str] | None = None
-) -> str:
+def select_account_number(viewer: dict, supported_account_numbers: set[str] | None = None) -> str:
     accounts = viewer.get("accounts", [])
     if not accounts:
-        raise EonNextRatesUnsupportedError(
-            "No accounts found for the authenticated E.ON viewer"
-        )
+        raise EonNextRatesUnsupportedError("No accounts found for the authenticated E.ON viewer")
 
     if supported_account_numbers is not None:
         for account in accounts:
@@ -413,8 +407,7 @@ def select_account_number(
                 return account["number"]
 
         raise EonNextRatesUnsupportedError(
-            "No supported active HalfHourlyTariff account found for the authenticated "
-            "E.ON viewer"
+            "No supported active HalfHourlyTariff account found for the authenticated E.ON viewer"
         )
 
     return accounts[0]["number"]
@@ -426,6 +419,9 @@ def select_active_half_hourly_agreement(account: dict, now: datetime) -> dict:
         valid_to = _parse_datetime(agreement["validTo"])
         tariff_type = agreement["tariff"].get("__typename")
 
+        if valid_from is None:
+            continue
+
         if (
             valid_from <= now
             and (valid_to is None or now < valid_to)
@@ -434,8 +430,7 @@ def select_active_half_hourly_agreement(account: dict, now: datetime) -> dict:
             return agreement
 
     raise EonNextRatesUnsupportedError(
-        "No active HalfHourlyTariff electricity agreement found for "
-        f"{now.isoformat()}"
+        f"No active HalfHourlyTariff electricity agreement found for {now.isoformat()}"
     )
 
 
@@ -481,12 +476,8 @@ class EonNextRatesClient:
 
         if payload.get("errors"):
             if _is_auth_error(payload["errors"]):
-                raise EonNextRatesAuthError(
-                    f"GraphQL authentication failed: {payload['errors']}"
-                )
-            raise EonNextRatesConnectionError(
-                f"GraphQL request failed: {payload['errors']}"
-            )
+                raise EonNextRatesAuthError(f"GraphQL authentication failed: {payload['errors']}")
+            raise EonNextRatesConnectionError(f"GraphQL request failed: {payload['errors']}")
 
         data = payload.get("data")
         if data is None:
@@ -499,8 +490,7 @@ class EonNextRatesClient:
             LOGIN_MUTATION,
             {"input": {"email": self._email, "password": self._password}},
         )
-        self._store_token_state(data["obtainKrakenToken"])
-        return self._token
+        return self._store_token_state(data["obtainKrakenToken"])
 
     async def _async_refresh(self) -> str:
         if self._refresh_token is None:
@@ -524,8 +514,7 @@ class EonNextRatesClient:
             self._refresh_token_expires_at = None
             return await self._async_login()
 
-        self._store_token_state(data["obtainKrakenToken"])
-        return self._token
+        return self._store_token_state(data["obtainKrakenToken"])
 
     async def _async_access_token(self) -> str:
         if self._token is not None and not self._access_token_is_stale():
@@ -536,17 +525,14 @@ class EonNextRatesClient:
 
         return await self._async_login()
 
-    async def _async_authenticated_graphql(
-        self, query: str, variables: dict | None = None
-    ) -> dict:
+    async def _async_authenticated_graphql(self, query: str, variables: dict | None = None) -> dict:
         token = await self._async_access_token()
 
         try:
             return await self._graphql(query, variables, token=token)
         except EonNextRatesAuthError:
-            pass
+            self._clear_access_token()
 
-        self._clear_access_token()
         token = await self._async_access_token()
         return await self._graphql(query, variables, token=token)
 
@@ -561,9 +547,7 @@ class EonNextRatesClient:
     async def async_discover_account_number(self) -> str:
         token = await self._async_access_token()
 
-        async def _async_discovery_graphql(
-            query: str, variables: dict | None = None
-        ) -> dict:
+        async def _async_discovery_graphql(query: str, variables: dict | None = None) -> dict:
             nonlocal token
 
             try:
@@ -584,18 +568,14 @@ class EonNextRatesClient:
                 {"accountNumber": account_number},
             )
             try:
-                agreement = select_active_half_hourly_agreement(
-                    account_data["account"], now
-                )
+                agreement = select_active_half_hourly_agreement(account_data["account"], now)
                 build_account_snapshot(account_data["account"], agreement, now)
             except EonNextRatesUnsupportedError:
                 continue
 
             supported_account_numbers.add(account_number)
 
-        self._account_number = select_account_number(
-            data["viewer"], supported_account_numbers
-        )
+        self._account_number = select_account_number(data["viewer"], supported_account_numbers)
         return self._account_number
 
     async def async_get_account_snapshot(self) -> AccountSnapshot:
@@ -638,9 +618,7 @@ class EonNextRatesClient:
                 {"deviceId": normalized_device["id"]},
             )
             planned_dispatches = (
-                _normalize_smartflex_planned_dispatches(
-                    planned_data.get("flexPlannedDispatches")
-                )
+                _normalize_smartflex_planned_dispatches(planned_data.get("flexPlannedDispatches"))
                 if isinstance(planned_data, dict)
                 else []
             )
@@ -659,13 +637,20 @@ class EonNextRatesClient:
 
         return tuple(snapshots)
 
-    def _store_token_state(self, token_payload: dict[str, Any]) -> None:
-        self._token = token_payload["token"]
+    def _store_token_state(self, token_payload: dict[str, Any]) -> str:
+        token = token_payload.get("token")
+        if not isinstance(token, str):
+            raise EonNextRatesConnectionError(
+                "GraphQL token response did not include an access token"
+            )
+
+        self._token = token
         self._token_expires_at = _token_expiry_datetime(token_payload["payload"])
         self._refresh_token = token_payload["refreshToken"]
         self._refresh_token_expires_at = self._now() + timedelta(
             seconds=token_payload["refreshExpiresIn"]
         )
+        return token
 
     def _access_token_is_stale(self) -> bool:
         if self._token is None:
@@ -815,9 +800,7 @@ def _normalize_smartflex_device(device: Any) -> dict[str, Any] | None:
         "activePower": status.get("activePower"),
         "stateOfChargeLimit": status.get("stateOfChargeLimit"),
         "testDispatchFailureReason": status.get("testDispatchFailureReason"),
-        "chargingSessions": _normalize_smartflex_charging_sessions(
-            device.get("chargingSessions")
-        ),
+        "chargingSessions": _normalize_smartflex_charging_sessions(device.get("chargingSessions")),
     }
 
 
@@ -861,11 +844,7 @@ def _build_smartflex_soc_limit_snapshot(
     timestamp = _parse_smartflex_datetime(soc_limit.get("timestamp"))
     upper_soc_limit = _parse_float(soc_limit.get("upperSocLimit"))
     is_limit_violated = soc_limit.get("isLimitViolated")
-    if (
-        timestamp is None
-        or upper_soc_limit is None
-        or not isinstance(is_limit_violated, bool)
-    ):
+    if timestamp is None or upper_soc_limit is None or not isinstance(is_limit_violated, bool):
         return None
 
     return SmartFlexSocLimitSnapshot(
@@ -1134,9 +1113,7 @@ def _billing_fields(account: dict) -> dict[str, Any]:
     total_credits = statement.get("totalCredits") if isinstance(statement, dict) else None
 
     return {
-        "current_account_balance_gbp": _optional_minor_units_to_gbp(
-            account.get("balance")
-        ),
+        "current_account_balance_gbp": _optional_minor_units_to_gbp(account.get("balance")),
         "latest_statement_issued_at": _parse_date_to_datetime(
             statement.get("issuedDate") if isinstance(statement, dict) else None
         ),
@@ -1229,16 +1206,15 @@ def select_active_gas_agreement(account: dict, now: datetime) -> dict | None:
     return None
 
 
-def _latest_gas_meter_reading_fields(meter_point: dict | None) -> dict[str, Any]:
+def _latest_meter_reading_data(meter_point: dict | None) -> dict[str, Any] | None:
     if not isinstance(meter_point, dict):
-        return _empty_gas_meter_reading_fields()
+        return None
 
-    mprn = meter_point.get("mprn")
     unbilled_readings = meter_point.get("unbilledReadings")
     if not isinstance(unbilled_readings, list):
-        return _empty_gas_meter_reading_fields(mprn)
+        return None
 
-    def _parse_read_at(reading: dict[str, Any]) -> datetime | None:
+    def _parse_read_at(reading: Any) -> datetime | None:
         if not isinstance(reading, dict):
             return None
 
@@ -1270,23 +1246,36 @@ def _latest_gas_meter_reading_fields(meter_point: dict | None) -> dict[str, Any]
                 continue
 
             return {
-                "latest_gas_meter_reading_value": reading_value,
-                "latest_gas_meter_reading_at": read_at,
-                "latest_gas_meter_reading_source": reading.get("readingSource")
-                or reading.get("source"),
-                "latest_gas_meter_reading_type": reading.get("readingType"),
-                "latest_gas_meter_reading_register_identifier": register.get(
-                    "identifier"
-                ),
-                "latest_gas_meter_reading_register_name": register.get("name"),
-                "latest_gas_meter_reading_register_digits": register.get("digits"),
-                "latest_gas_meter_reading_register_is_quarantined": register.get(
-                    "isQuarantined"
-                ),
-                "gas_meter_point_mprn": mprn,
+                "value": reading_value,
+                "at": read_at,
+                "source": reading.get("readingSource") or reading.get("source"),
+                "type": reading.get("readingType"),
+                "register_identifier": register.get("identifier"),
+                "register_name": register.get("name"),
+                "register_digits": register.get("digits"),
+                "register_is_quarantined": register.get("isQuarantined"),
             }
 
-    return _empty_gas_meter_reading_fields(mprn)
+    return None
+
+
+def _latest_gas_meter_reading_fields(meter_point: dict | None) -> dict[str, Any]:
+    mprn = meter_point.get("mprn") if isinstance(meter_point, dict) else None
+    reading = _latest_meter_reading_data(meter_point)
+    if reading is None:
+        return _empty_gas_meter_reading_fields(mprn)
+
+    return {
+        "latest_gas_meter_reading_value": reading["value"],
+        "latest_gas_meter_reading_at": reading["at"],
+        "latest_gas_meter_reading_source": reading["source"],
+        "latest_gas_meter_reading_type": reading["type"],
+        "latest_gas_meter_reading_register_identifier": reading["register_identifier"],
+        "latest_gas_meter_reading_register_name": reading["register_name"],
+        "latest_gas_meter_reading_register_digits": reading["register_digits"],
+        "latest_gas_meter_reading_register_is_quarantined": reading["register_is_quarantined"],
+        "gas_meter_point_mprn": mprn,
+    }
 
 
 def _gas_fields(account: dict, now: datetime) -> dict[str, Any]:
@@ -1299,14 +1288,10 @@ def _gas_fields(account: dict, now: datetime) -> dict[str, Any]:
 
     return {
         "gas_rate_gbp_per_kwh": _optional_pence_to_gbp(tariff.get("unitRate")),
-        "gas_pre_vat_rate_gbp_per_kwh": _optional_pence_to_gbp(
-            tariff.get("preVatUnitRate")
-        ),
+        "gas_pre_vat_rate_gbp_per_kwh": _optional_pence_to_gbp(tariff.get("preVatUnitRate")),
         "gas_tariff_name": tariff.get("displayName"),
         "gas_tariff_code": tariff.get("tariffCode"),
-        "gas_standing_charge_gbp_per_day": _optional_pence_to_gbp(
-            tariff.get("standingCharge")
-        ),
+        "gas_standing_charge_gbp_per_day": _optional_pence_to_gbp(tariff.get("standingCharge")),
         "gas_pre_vat_standing_charge_gbp_per_day": _optional_pence_to_gbp(
             tariff.get("preVatStandingCharge")
         ),
@@ -1317,64 +1302,22 @@ def _gas_fields(account: dict, now: datetime) -> dict[str, Any]:
 
 
 def _latest_meter_reading_fields(meter_point: dict | None) -> dict[str, Any]:
-    if not isinstance(meter_point, dict):
-        return _empty_meter_reading_fields(None)
-
-    mpan = meter_point.get("mpan")
-    unbilled_readings = meter_point.get("unbilledReadings")
-    if unbilled_readings is None:
+    mpan = meter_point.get("mpan") if isinstance(meter_point, dict) else None
+    reading = _latest_meter_reading_data(meter_point)
+    if reading is None:
         return _empty_meter_reading_fields(mpan)
 
-    if not isinstance(unbilled_readings, list):
-        return _empty_meter_reading_fields(mpan)
-
-    def _parse_read_at(reading: dict[str, Any]) -> datetime | None:
-        if not isinstance(reading, dict):
-            return None
-
-        try:
-            return _parse_datetime(reading.get("readAt"))
-        except ValueError:
-            return None
-
-    sorted_readings = sorted(
-        ((_parse_read_at(reading), reading) for reading in unbilled_readings),
-        key=lambda item: item[0] or datetime.min.replace(tzinfo=UTC),
-        reverse=True,
-    )
-
-    for read_at, reading in sorted_readings:
-        if read_at is None or not isinstance(reading, dict):
-            continue
-
-        registers = reading.get("registers")
-        if not isinstance(registers, list):
-            continue
-
-        for register in registers:
-            if not isinstance(register, dict):
-                continue
-
-            reading_value = _parse_meter_reading_value(register.get("value"))
-            if reading_value is None:
-                continue
-
-            return {
-                "latest_meter_reading_kwh": reading_value,
-                "latest_meter_reading_at": read_at,
-                "latest_meter_reading_source": reading.get("readingSource")
-                or reading.get("source"),
-                "latest_meter_reading_type": reading.get("readingType"),
-                "latest_meter_reading_register_identifier": register.get("identifier"),
-                "latest_meter_reading_register_name": register.get("name"),
-                "latest_meter_reading_register_digits": register.get("digits"),
-                "latest_meter_reading_register_is_quarantined": register.get(
-                    "isQuarantined"
-                ),
-                "meter_point_mpan": mpan,
-            }
-
-    return _empty_meter_reading_fields(mpan)
+    return {
+        "latest_meter_reading_kwh": reading["value"],
+        "latest_meter_reading_at": reading["at"],
+        "latest_meter_reading_source": reading["source"],
+        "latest_meter_reading_type": reading["type"],
+        "latest_meter_reading_register_identifier": reading["register_identifier"],
+        "latest_meter_reading_register_name": reading["register_name"],
+        "latest_meter_reading_register_digits": reading["register_digits"],
+        "latest_meter_reading_register_is_quarantined": reading["register_is_quarantined"],
+        "meter_point_mpan": mpan,
+    }
 
 
 def _token_expiry_datetime(payload: dict[str, Any] | None) -> datetime | None:
@@ -1390,12 +1333,33 @@ def _token_expiry_datetime(payload: dict[str, Any] | None) -> datetime | None:
 
 def _is_auth_error(errors: list[dict[str, Any]]) -> bool:
     for error in errors:
-        extensions = error.get("extensions", {})
+        extensions = error.get("extensions")
+        if not isinstance(extensions, dict):
+            extensions = {}
+
         if extensions.get("code") == "UNAUTHENTICATED":
             return True
 
-        message = error.get("message", "").lower()
-        if "auth" in message or "signature has expired" in message or "jwt" in message:
+        # E.ON returns this validation error when a refresh token has expired.
+        if extensions.get("errorCode") == "KT-CT-1134":
+            return True
+
+        message_parts = [error.get("message"), extensions.get("errorDescription")]
+        validation_errors = extensions.get("validationErrors")
+        if isinstance(validation_errors, list):
+            message_parts.extend(
+                validation_error.get("message")
+                for validation_error in validation_errors
+                if isinstance(validation_error, dict)
+            )
+
+        message = " ".join(part for part in message_parts if isinstance(part, str)).lower()
+        if (
+            "auth" in message
+            or "signature has expired" in message
+            or "jwt" in message
+            or ("refresh token" in message and "expired" in message)
+        ):
             return True
 
     return False
@@ -1404,16 +1368,12 @@ def _is_auth_error(errors: list[dict[str, Any]]) -> bool:
 def build_account_snapshot(account: dict, agreement: dict, now: datetime) -> AccountSnapshot:
     account_number = account.get("number")
     if account_number is None:
-        raise EonNextRatesUnsupportedError(
-            "Account payload missing required field(s): number"
-        )
+        raise EonNextRatesUnsupportedError("Account payload missing required field(s): number")
 
     tariff = agreement["tariff"]
     tariff_type = tariff.get("__typename")
     if tariff_type != "HalfHourlyTariff":
-        raise EonNextRatesUnsupportedError(
-            f"Expected HalfHourlyTariff tariff, got {tariff_type!r}"
-        )
+        raise EonNextRatesUnsupportedError(f"Expected HalfHourlyTariff tariff, got {tariff_type!r}")
 
     required_fields = ("unitRates", "displayName", "tariffCode", "standingCharge")
     missing_fields = [field for field in required_fields if field not in tariff]
@@ -1423,35 +1383,45 @@ def build_account_snapshot(account: dict, agreement: dict, now: datetime) -> Acc
             f"HalfHourlyTariff payload missing required field(s): {missing}"
         )
 
-    current_window = None
-    next_window = None
+    current_window: dict[str, Any] | None = None
+    next_window: dict[str, Any] | None = None
 
     unit_rates = tariff["unitRates"]
-    if not unit_rates:
+    if not isinstance(unit_rates, list) or not unit_rates:
         raise EonNextRatesUnsupportedError(
             "HalfHourlyTariff payload missing required field(s): unitRates"
         )
 
+    parsed_windows: list[tuple[dict[str, Any], datetime, datetime | None]] = []
     for unit_rate in unit_rates:
-        valid_from = _parse_datetime(unit_rate["validFrom"])
-        valid_to = _parse_datetime(unit_rate.get("validTo"))
-
-        if valid_from <= now and valid_to is None:
+        if not isinstance(unit_rate, dict):
             raise EonNextRatesUnsupportedError(
-                "Current HalfHourlyTariff window is missing validTo"
+                "HalfHourlyTariff payload contains an invalid unitRates entry"
             )
+
+        valid_from = _parse_datetime(unit_rate.get("validFrom"))
+        if valid_from is None:
+            raise EonNextRatesUnsupportedError("HalfHourlyTariff window is missing validFrom")
+
+        parsed_windows.append((unit_rate, valid_from, _parse_datetime(unit_rate.get("validTo"))))
+
+    for unit_rate, valid_from, valid_to in parsed_windows:
+        if valid_to is None:
+            if valid_from <= now:
+                raise EonNextRatesUnsupportedError(
+                    "Current HalfHourlyTariff window is missing validTo"
+                )
+            continue
 
         if valid_from <= now < valid_to:
             current_window = unit_rate
-            next_window = min(
-                (
-                    candidate
-                    for candidate in unit_rates
-                    if _parse_datetime(candidate["validFrom"]) >= valid_to
-                ),
-                key=lambda candidate: _parse_datetime(candidate["validFrom"]),
-                default=None,
-            )
+            future_windows = [
+                (candidate_from, candidate)
+                for candidate, candidate_from, _candidate_to in parsed_windows
+                if candidate_from >= valid_to
+            ]
+            if future_windows:
+                _, next_window = min(future_windows, key=lambda item: item[0])
             break
 
     if current_window is None:
@@ -1461,9 +1431,7 @@ def build_account_snapshot(account: dict, agreement: dict, now: datetime) -> Acc
 
     current_window_end = _parse_datetime(current_window["validTo"])
     if current_window_end is None:
-        raise EonNextRatesUnsupportedError(
-            "Current HalfHourlyTariff window is missing validTo"
-        )
+        raise EonNextRatesUnsupportedError("Current HalfHourlyTariff window is missing validTo")
 
     next_window_start = None
 

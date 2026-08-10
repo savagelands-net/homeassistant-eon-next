@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib
 import sys
 import types
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pytest
 
@@ -25,21 +27,17 @@ def homeassistant_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         if name.startswith("homeassistant"):
             monkeypatch.delitem(sys.modules, name, raising=False)
 
-    homeassistant = types.ModuleType("homeassistant")
+    homeassistant: Any = types.ModuleType("homeassistant")
 
-    config_entries = types.ModuleType("homeassistant.config_entries")
+    config_entries: Any = types.ModuleType("homeassistant.config_entries")
 
     @dataclass
     class ConfigEntry:
         entry_id: str = "entry-123"
         runtime_data: object | None = None
-        unload_callbacks: list[object] | None = None
+        unload_callbacks: list[Callable[[], Any]] = field(default_factory=list)
 
-        def __post_init__(self) -> None:
-            if self.unload_callbacks is None:
-                self.unload_callbacks = []
-
-        def async_on_unload(self, callback):
+        def async_on_unload(self, callback: Callable[[], Any]) -> None:
             self.unload_callbacks.append(callback)
 
         def async_unload(self) -> None:
@@ -48,10 +46,10 @@ def homeassistant_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
 
     config_entries.ConfigEntry = ConfigEntry
 
-    const = types.ModuleType("homeassistant.const")
+    const: Any = types.ModuleType("homeassistant.const")
     const.CURRENCY_GBP = "GBP"
 
-    core = types.ModuleType("homeassistant.core")
+    core: Any = types.ModuleType("homeassistant.core")
 
     class HomeAssistant:
         def __init__(self) -> None:
@@ -59,12 +57,12 @@ def homeassistant_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
 
     core.HomeAssistant = HomeAssistant
 
-    helpers = types.ModuleType("homeassistant.helpers")
+    helpers: Any = types.ModuleType("homeassistant.helpers")
 
-    entity_platform = types.ModuleType("homeassistant.helpers.entity_platform")
+    entity_platform: Any = types.ModuleType("homeassistant.helpers.entity_platform")
     entity_platform.AddEntitiesCallback = object
 
-    entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
+    entity_registry: Any = types.ModuleType("homeassistant.helpers.entity_registry")
 
     class _EntityRegistry:
         def __init__(self) -> None:
@@ -90,7 +88,7 @@ def homeassistant_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     entity_registry.async_get = async_get
     helpers.entity_registry = entity_registry
 
-    sensor = types.ModuleType("homeassistant.components.sensor")
+    sensor: Any = types.ModuleType("homeassistant.components.sensor")
 
     @dataclass(frozen=True, kw_only=True)
     class SensorEntityDescription:
@@ -130,7 +128,7 @@ def homeassistant_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     sensor.SensorEntityDescription = SensorEntityDescription
     sensor.SensorDeviceClass = SensorDeviceClass
 
-    update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
+    update_coordinator: Any = types.ModuleType("homeassistant.helpers.update_coordinator")
 
     class UpdateFailed(Exception):
         pass
@@ -250,7 +248,7 @@ def snapshot() -> AccountSnapshot:
 
 
 class _DummyCoordinator:
-    def __init__(self, data: AccountSnapshot) -> None:
+    def __init__(self, data: Any) -> None:
         self.data = data
 
     def async_add_listener(self, update_callback):
@@ -358,12 +356,14 @@ def _build_smartflex_device_snapshot(
         lifecycle_status=lifecycle_status,
         current_state=current_state,
         is_suspended=is_suspended,
-        state_of_charge=state_of_charge,
-        active_power=active_power,
-        state_of_charge_limit=state_of_charge_limit,
+        state_of_charge=cast(SmartFlexReadingSnapshot | None, state_of_charge),
+        active_power=cast(SmartFlexReadingSnapshot | None, active_power),
+        state_of_charge_limit=cast(SmartFlexSocLimitSnapshot | None, state_of_charge_limit),
         test_dispatch_failure_reason=test_dispatch_failure_reason,
-        latest_charging_session=latest_charging_session,
-        next_planned_dispatch=next_planned_dispatch,
+        latest_charging_session=cast(
+            SmartFlexChargingSessionSnapshot | None, latest_charging_session
+        ),
+        next_planned_dispatch=cast(SmartFlexPlannedDispatchSnapshot | None, next_planned_dispatch),
     )
 
 
@@ -420,9 +420,10 @@ async def test_async_setup_entry_removes_legacy_completed_dispatch_registry_entr
         "sensor.eon_latest_completed_dispatch_end",
         "sensor.eon_latest_completed_dispatch_delta",
     ]
-    assert registry.async_get_entity_id(
-        "sensor", DOMAIN, "entry-123_account_number"
-    ) == "sensor.eon_account_number"
+    assert (
+        registry.async_get_entity_id("sensor", DOMAIN, "entry-123_account_number")
+        == "sensor.eon_account_number"
+    )
 
 
 @pytest.mark.asyncio
@@ -451,9 +452,7 @@ async def test_async_setup_entry_adds_smartflex_entities_when_data_arrives_later
     assert len(added_batches) == 2
     assert len(added_batches[0]) == 30
     assert len(added_batches[1]) == 10
-    assert {
-        entity.unique_id for entity in added_batches[1]
-    } == {
+    assert {entity.unique_id for entity in added_batches[1]} == {
         "entry-123_smartflex_charger-001_current_state",
         "entry-123_smartflex_charger-001_state_of_charge",
         "entry-123_smartflex_charger-001_active_power",
@@ -576,9 +575,7 @@ def test_electricity_standing_charge_and_meter_sensors_use_explicit_names(
     standing_charge_ex_vat_sensor = _entity_by_suffix(
         entities, "electricity_standing_charge_ex_vat"
     )
-    latest_meter_reading_sensor = _entity_by_suffix(
-        entities, "latest_electricity_meter_reading"
-    )
+    latest_meter_reading_sensor = _entity_by_suffix(entities, "latest_electricity_meter_reading")
     latest_meter_reading_at_sensor = _entity_by_suffix(
         entities, "latest_electricity_meter_reading_at"
     )
@@ -605,9 +602,7 @@ def test_electricity_standing_charge_and_meter_sensors_use_explicit_names(
         "latest_electricity_meter_reading_register_digits": 5,
         "latest_electricity_meter_reading_register_is_quarantined": False,
     }
-    assert latest_meter_reading_at_sensor.native_value == datetime(
-        2026, 5, 2, 11, 0, tzinfo=UTC
-    )
+    assert latest_meter_reading_at_sensor.native_value == datetime(2026, 5, 2, 11, 0, tzinfo=UTC)
 
 
 def test_gas_and_billing_sensor_names_remain_unchanged(sensor_module, snapshot) -> None:
@@ -623,9 +618,7 @@ def test_gas_and_billing_sensor_names_remain_unchanged(sensor_module, snapshot) 
         "E.ON Latest Statement Charges"
     )
     assert _entity_by_suffix(entities, "gas_unit_rate").name == "E.ON Gas Unit Rate"
-    assert _entity_by_suffix(entities, "gas_standing_charge").name == (
-        "E.ON Gas Standing Charge"
-    )
+    assert _entity_by_suffix(entities, "gas_standing_charge").name == ("E.ON Gas Standing Charge")
     assert _entity_by_suffix(entities, "gas_standing_charge_ex_vat").name == (
         "E.ON Gas Standing Charge Ex VAT"
     )
@@ -687,15 +680,10 @@ def test_statement_amount_sensors_expose_expected_values(sensor_module, snapshot
     assert _entity_by_suffix(entities, "latest_direct_debit_amount").native_value == 400.05
 
 
-def test_statement_fuel_breakdown_sensors_expose_expected_values(
-    sensor_module, snapshot
-) -> None:
+def test_statement_fuel_breakdown_sensors_expose_expected_values(sensor_module, snapshot) -> None:
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
 
-    assert (
-        _entity_by_suffix(entities, "latest_electricity_statement_total").native_value
-        == 290.51
-    )
+    assert _entity_by_suffix(entities, "latest_electricity_statement_total").native_value == 290.51
     assert (
         _entity_by_suffix(entities, "latest_electricity_statement_quantity").native_value
         == 1571.748
@@ -704,23 +692,20 @@ def test_statement_fuel_breakdown_sensors_expose_expected_values(
         _entity_by_suffix(entities, "latest_electricity_statement_usage_cost").native_value
         == 271.91
     )
-    assert _entity_by_suffix(
-        entities, "latest_electricity_statement_standing_charge"
-    ).native_value == 18.6
+    assert (
+        _entity_by_suffix(entities, "latest_electricity_statement_standing_charge").native_value
+        == 18.6
+    )
     assert _entity_by_suffix(entities, "latest_gas_statement_total").native_value == 169.16
     assert _entity_by_suffix(entities, "latest_gas_statement_quantity").native_value == 2721.06
 
 
-def test_gas_rate_and_charge_sensors_expose_expected_values(
-    sensor_module, snapshot
-) -> None:
+def test_gas_rate_and_charge_sensors_expose_expected_values(sensor_module, snapshot) -> None:
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
 
     gas_rate_sensor = _entity_by_suffix(entities, "gas_unit_rate")
     gas_standing_charge_sensor = _entity_by_suffix(entities, "gas_standing_charge")
-    gas_standing_charge_ex_vat_sensor = _entity_by_suffix(
-        entities, "gas_standing_charge_ex_vat"
-    )
+    gas_standing_charge_ex_vat_sensor = _entity_by_suffix(entities, "gas_standing_charge_ex_vat")
 
     assert gas_rate_sensor.name == "E.ON Gas Unit Rate"
     assert gas_rate_sensor.native_value == 0.06543
@@ -741,15 +726,11 @@ def test_gas_rate_and_charge_sensors_expose_expected_values(
     assert gas_standing_charge_ex_vat_sensor.native_unit_of_measurement == "GBP/day"
 
 
-def test_latest_gas_meter_reading_sensors_expose_expected_values(
-    sensor_module, snapshot
-) -> None:
+def test_latest_gas_meter_reading_sensors_expose_expected_values(sensor_module, snapshot) -> None:
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(snapshot))
 
     gas_reading_sensor = _entity_by_suffix(entities, "latest_gas_meter_reading")
-    gas_reading_timestamp_sensor = _entity_by_suffix(
-        entities, "latest_gas_meter_reading_at"
-    )
+    gas_reading_timestamp_sensor = _entity_by_suffix(entities, "latest_gas_meter_reading_at")
 
     assert gas_reading_sensor.name == "E.ON Latest Gas Meter Reading"
     assert gas_reading_sensor.native_value == 4567.0
@@ -764,9 +745,7 @@ def test_latest_gas_meter_reading_sensors_expose_expected_values(
         "latest_gas_meter_reading_register_is_quarantined": False,
     }
     assert gas_reading_timestamp_sensor.name == "E.ON Latest Gas Meter Reading Time"
-    assert gas_reading_timestamp_sensor.native_value == datetime(
-        2026, 5, 2, 13, 0, tzinfo=UTC
-    )
+    assert gas_reading_timestamp_sensor.native_value == datetime(2026, 5, 2, 13, 0, tzinfo=UTC)
 
 
 def test_optional_billing_and_gas_sensors_return_none_when_data_is_absent(
@@ -800,10 +779,7 @@ def test_optional_billing_and_gas_sensors_return_none_when_data_is_absent(
     )
 
     assert _entity_by_suffix(entities, "current_account_balance").native_value is None
-    assert (
-        _entity_by_suffix(entities, "latest_statement_closing_balance").native_value
-        is None
-    )
+    assert _entity_by_suffix(entities, "latest_statement_closing_balance").native_value is None
     assert _entity_by_suffix(entities, "latest_statement_charges").native_value is None
     assert _entity_by_suffix(entities, "gas_unit_rate").native_value is None
     assert _entity_by_suffix(entities, "gas_unit_rate").extra_state_attributes == {
@@ -866,13 +842,9 @@ def test_optional_statement_breakdown_sensors_return_none_when_data_is_absent(
     assert _entity_by_suffix(entities, "latest_direct_debit_amount").native_value is None
     assert _entity_by_suffix(entities, "latest_direct_debit_at").native_value is None
     assert _entity_by_suffix(entities, "latest_electricity_statement_total").native_value is None
+    assert _entity_by_suffix(entities, "latest_electricity_statement_quantity").native_value is None
     assert (
-        _entity_by_suffix(entities, "latest_electricity_statement_quantity").native_value
-        is None
-    )
-    assert (
-        _entity_by_suffix(entities, "latest_electricity_statement_usage_cost").native_value
-        is None
+        _entity_by_suffix(entities, "latest_electricity_statement_usage_cost").native_value is None
     )
     assert (
         _entity_by_suffix(entities, "latest_electricity_statement_standing_charge").native_value
@@ -902,23 +874,25 @@ def test_build_sensors_adds_smartflex_entities_only_for_real_device_fields(
     )
 
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(smartflex_snapshot))
-    assert _entity_by_suffix(
-        entities, "smartflex_charger-001_current_state"
-    ).name == "E.ON Driveway Charger Current State"
-    assert _entity_by_suffix(
-        entities, "smartflex_vehicle-002_current_state"
-    ).name == "E.ON Family EV Current State"
+    assert (
+        _entity_by_suffix(entities, "smartflex_charger-001_current_state").name
+        == "E.ON Driveway Charger Current State"
+    )
+    assert (
+        _entity_by_suffix(entities, "smartflex_vehicle-002_current_state").name
+        == "E.ON Family EV Current State"
+    )
     assert _entity_by_suffix(entities, "smartflex_vehicle-002_battery_size").native_value == 77.4
     assert not any(
         entity.unique_id == "entry-123_smartflex_vehicle-002_charge_point_power_output"
         for entity in entities
     )
-    assert _entity_by_suffix(
-        entities, "smartflex_charger-001_charge_point_power_output"
-    ).native_value == 7.4
+    assert (
+        _entity_by_suffix(entities, "smartflex_charger-001_charge_point_power_output").native_value
+        == 7.4
+    )
     assert not any(
-        entity.unique_id == "entry-123_smartflex_charger-001_battery_size"
-        for entity in entities
+        entity.unique_id == "entry-123_smartflex_charger-001_battery_size" for entity in entities
     )
     assert not any(
         entity.unique_id.startswith("entry-123_smartflex_latest_completed_dispatch_")
@@ -931,9 +905,7 @@ def test_smartflex_device_sensors_expose_expected_values_and_attributes(
 ) -> None:
     smartflex_snapshot = replace(
         snapshot,
-        smartflex_devices=(
-            _build_smartflex_device_snapshot(test_dispatch_failure_reason="NONE"),
-        ),
+        smartflex_devices=(_build_smartflex_device_snapshot(test_dispatch_failure_reason="NONE"),),
     )
 
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(smartflex_snapshot))
@@ -996,68 +968,45 @@ def test_smartflex_device_sensors_expose_expected_values_and_attributes(
     }
 
     assert not any(
-        entity.unique_id == "entry-123_smartflex_charger-001_battery_size"
-        for entity in entities
+        entity.unique_id == "entry-123_smartflex_charger-001_battery_size" for entity in entities
     )
     assert charge_point_power_output_sensor.native_value == 7.4
     assert charge_point_power_output_sensor.native_unit_of_measurement == "kW"
 
-    assert latest_session_start_sensor.native_value == datetime(
-        2026, 5, 1, 20, 0, tzinfo=UTC
-    )
-    assert latest_session_end_sensor.native_value == datetime(
-        2026, 5, 1, 21, 0, tzinfo=UTC
-    )
+    assert latest_session_start_sensor.native_value == datetime(2026, 5, 1, 20, 0, tzinfo=UTC)
+    assert latest_session_end_sensor.native_value == datetime(2026, 5, 1, 21, 0, tzinfo=UTC)
     assert latest_session_energy_sensor.native_value == 5.6
     assert latest_session_energy_sensor.native_unit_of_measurement == "kWh"
     assert latest_session_energy_sensor.extra_state_attributes == {
-        "smartflex_latest_charging_session_start": datetime(
-            2026, 5, 1, 20, 0, tzinfo=UTC
-        ),
-        "smartflex_latest_charging_session_end": datetime(
-            2026, 5, 1, 21, 0, tzinfo=UTC
-        ),
+        "smartflex_latest_charging_session_start": datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+        "smartflex_latest_charging_session_end": datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
         "smartflex_latest_charging_session_soc_delta": 23.0,
         "smartflex_latest_charging_session_soc_final": 55.0,
     }
     assert latest_session_cost_sensor.native_value == 1.12
     assert latest_session_cost_sensor.native_unit_of_measurement == "GBP"
     assert latest_session_cost_sensor.extra_state_attributes == {
-        "smartflex_latest_charging_session_start": datetime(
-            2026, 5, 1, 20, 0, tzinfo=UTC
-        ),
-        "smartflex_latest_charging_session_end": datetime(
-            2026, 5, 1, 21, 0, tzinfo=UTC
-        ),
+        "smartflex_latest_charging_session_start": datetime(2026, 5, 1, 20, 0, tzinfo=UTC),
+        "smartflex_latest_charging_session_end": datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
         "smartflex_latest_charging_session_soc_delta": 23.0,
         "smartflex_latest_charging_session_soc_final": 55.0,
     }
 
-    assert next_dispatch_start_sensor.native_value == datetime(
-        2026, 5, 1, 21, 0, tzinfo=UTC
-    )
+    assert next_dispatch_start_sensor.native_value == datetime(2026, 5, 1, 21, 0, tzinfo=UTC)
     assert next_dispatch_start_sensor.extra_state_attributes == {
-        "smartflex_next_planned_dispatch_end": datetime(
-            2026, 5, 1, 21, 30, tzinfo=UTC
-        ),
+        "smartflex_next_planned_dispatch_end": datetime(2026, 5, 1, 21, 30, tzinfo=UTC),
         "smartflex_next_planned_dispatch_type": "GRID_CHARGE",
     }
     assert next_dispatch_energy_sensor.native_value == 2.5
     assert next_dispatch_energy_sensor.native_unit_of_measurement == "kWh"
     assert next_dispatch_energy_sensor.extra_state_attributes == {
-        "smartflex_next_planned_dispatch_start": datetime(
-            2026, 5, 1, 21, 0, tzinfo=UTC
-        ),
-        "smartflex_next_planned_dispatch_end": datetime(
-            2026, 5, 1, 21, 30, tzinfo=UTC
-        ),
+        "smartflex_next_planned_dispatch_start": datetime(2026, 5, 1, 21, 0, tzinfo=UTC),
+        "smartflex_next_planned_dispatch_end": datetime(2026, 5, 1, 21, 30, tzinfo=UTC),
         "smartflex_next_planned_dispatch_type": "GRID_CHARGE",
     }
 
 
-def test_missing_optional_smartflex_fields_do_not_create_entities(
-    sensor_module, snapshot
-) -> None:
+def test_missing_optional_smartflex_fields_do_not_create_entities(sensor_module, snapshot) -> None:
     smartflex_snapshot = replace(
         snapshot,
         smartflex_devices=(
@@ -1097,9 +1046,7 @@ def test_missing_optional_smartflex_fields_do_not_create_entities(
     assert existing_unique_ids == {"entry-123_smartflex_charger-001_current_state"}
 
 
-def test_latest_completed_dispatch_data_does_not_create_sensors(
-    sensor_module, snapshot
-) -> None:
+def test_latest_completed_dispatch_data_does_not_create_sensors(sensor_module, snapshot) -> None:
     smartflex_snapshot = types.SimpleNamespace(
         smartflex_devices=(_build_smartflex_device_snapshot(),),
         latest_completed_dispatch={
@@ -1121,9 +1068,7 @@ def test_latest_completed_dispatch_data_does_not_create_sensors(
     )
 
 
-def test_smartflex_unique_ids_preserve_distinct_raw_device_ids(
-    sensor_module, snapshot
-) -> None:
+def test_smartflex_unique_ids_preserve_distinct_raw_device_ids(sensor_module, snapshot) -> None:
     smartflex_snapshot = replace(
         snapshot,
         smartflex_devices=(
@@ -1134,12 +1079,14 @@ def test_smartflex_unique_ids_preserve_distinct_raw_device_ids(
 
     entities = sensor_module._build_sensors("entry-123", _DummyCoordinator(smartflex_snapshot))
 
-    assert _entity_by_suffix(
-        entities, "smartflex_charger-001_current_state"
-    ).name == "E.ON Hyphen Charger Current State"
-    assert _entity_by_suffix(
-        entities, "smartflex_charger_001_current_state"
-    ).name == "E.ON Underscore Charger Current State"
+    assert (
+        _entity_by_suffix(entities, "smartflex_charger-001_current_state").name
+        == "E.ON Hyphen Charger Current State"
+    )
+    assert (
+        _entity_by_suffix(entities, "smartflex_charger_001_current_state").name
+        == "E.ON Underscore Charger Current State"
+    )
 
 
 @pytest.mark.asyncio

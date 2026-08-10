@@ -5,7 +5,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]
 
 from custom_components.eon_next.api import (
     AGREEMENTS_QUERY,
@@ -105,7 +105,7 @@ def _account_payload(
     bills: dict[str, Any] | None = None,
     gas_agreements: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    account = {"number": account_number}
+    account: dict[str, Any] = {"number": account_number}
     if balance is not None:
         account["balance"] = balance
     if bills is not None:
@@ -160,7 +160,8 @@ def _statement_transaction_charge(
 
 
 def _statement_transaction_payment(
-    *, title: str,
+    *,
+    title: str,
     posted_date: str,
     gross_total: int,
 ) -> dict[str, Any]:
@@ -329,7 +330,7 @@ def _smartflex_device_payload(
     active_power: dict[str, Any] | None | object = _UNSET,
     state_of_charge_limit: dict[str, Any] | None | object = _UNSET,
     test_dispatch_failure_reason: str | None = None,
-    sessions: list[dict[str, Any]] | None = None,
+    sessions: Any = None,
     completed_dispatches: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
@@ -454,11 +455,7 @@ def _smartflex_vehicle_graphql_payload(
             },
             "testDispatchFailureReason": None,
         },
-        "chargingSessions": {
-            "edges": [
-                {"node": session} for session in (charging_sessions or [])
-            ]
-        },
+        "chargingSessions": {"edges": [{"node": session} for session in (charging_sessions or [])]},
     }
 
 
@@ -508,11 +505,7 @@ def _smartflex_charge_point_graphql_payload(
             },
             "testDispatchFailureReason": None,
         },
-        "chargingSessions": {
-            "edges": [
-                {"node": session} for session in (charging_sessions or [])
-            ]
-        },
+        "chargingSessions": {"edges": [{"node": session} for session in (charging_sessions or [])]},
     }
 
 
@@ -547,6 +540,30 @@ def _auth_error_payload() -> dict[str, Any]:
             {
                 "message": "Signature has expired",
                 "extensions": {"code": "UNAUTHENTICATED"},
+            }
+        ]
+    }
+
+
+def _expired_refresh_token_error_payload() -> dict[str, Any]:
+    return {
+        "errors": [
+            {
+                "message": "Invalid data.",
+                "locations": [{"line": 2, "column": 3}],
+                "path": ["obtainKrakenToken"],
+                "extensions": {
+                    "errorType": "VALIDATION",
+                    "errorCode": "KT-CT-1134",
+                    "errorDescription": "The refresh token has expired.",
+                    "errorClass": "VALIDATION",
+                    "validationErrors": [
+                        {
+                            "message": "The refresh token has expired.",
+                            "inputPath": ["input", "refreshToken"],
+                        }
+                    ],
+                },
             }
         ]
     }
@@ -658,7 +675,7 @@ def test_build_tariff_snapshot_selects_current_and_next_windows() -> None:
                     "validTo": "2026-05-01T05:00:00+00:00",
                 },
             ],
-        }
+        },
     }
 
     now = datetime(2026, 4, 30, 20, 30, tzinfo=UTC)
@@ -979,13 +996,9 @@ def test_build_account_snapshot_includes_latest_statement_breakdown() -> None:
     )
 
     assert snapshot.latest_statement_issued_at == datetime(2026, 4, 20, 0, 0, tzinfo=UTC)
-    assert snapshot.latest_statement_period_start == datetime(
-        2026, 3, 21, 0, 0, tzinfo=UTC
-    )
+    assert snapshot.latest_statement_period_start == datetime(2026, 3, 21, 0, 0, tzinfo=UTC)
     assert snapshot.latest_statement_period_end == datetime(2026, 4, 19, 0, 0, tzinfo=UTC)
-    assert snapshot.latest_statement_payment_due_at == datetime(
-        2026, 5, 5, 0, 0, tzinfo=UTC
-    )
+    assert snapshot.latest_statement_payment_due_at == datetime(2026, 5, 5, 0, 0, tzinfo=UTC)
     assert snapshot.current_account_balance_gbp == 310.61
     assert snapshot.latest_statement_opening_balance_gbp == 370.23
     assert snapshot.latest_statement_closing_balance_gbp == 310.61
@@ -1082,9 +1095,7 @@ def test_build_account_snapshot_includes_billing_and_gas_fields() -> None:
     assert snapshot.gas_agreement_valid_from == datetime(2026, 4, 1, 0, 0, tzinfo=UTC)
     assert snapshot.gas_agreement_valid_to is None
     assert snapshot.latest_gas_meter_reading_value == 4567.0
-    assert snapshot.latest_gas_meter_reading_at == datetime(
-        2026, 5, 2, 13, 0, tzinfo=UTC
-    )
+    assert snapshot.latest_gas_meter_reading_at == datetime(2026, 5, 2, 13, 0, tzinfo=UTC)
     assert snapshot.latest_gas_meter_reading_source == "CUSTOMER"
     assert snapshot.latest_gas_meter_reading_type == "actual"
     assert snapshot.latest_gas_meter_reading_register_identifier == "GAS-001"
@@ -1094,8 +1105,9 @@ def test_build_account_snapshot_includes_billing_and_gas_fields() -> None:
     assert snapshot.gas_meter_point_mprn == "1234567890"
 
 
-def test_build_account_snapshot_returns_none_for_optional_billing_and_gas_fields_when_absent(
-) -> None:
+def test_build_account_snapshot_returns_none_for_optional_billing_and_gas_fields_when_absent() -> (
+    None
+):
     snapshot = build_account_snapshot(
         _account_payload(),
         _agreement_payload_with_meter_readings(),
@@ -1124,8 +1136,7 @@ def test_build_account_snapshot_returns_none_for_optional_billing_and_gas_fields
     assert snapshot.gas_meter_point_mprn is None
 
 
-def test_build_account_snapshot_ignores_non_statement_latest_bill(
-) -> None:
+def test_build_account_snapshot_ignores_non_statement_latest_bill() -> None:
     snapshot = build_account_snapshot(
         _account_payload(
             balance=12345,
@@ -1385,7 +1396,7 @@ def test_build_tariff_snapshot_allows_missing_next_window() -> None:
                     "validTo": "2026-05-01T23:00:00+00:00",
                 },
             ],
-        }
+        },
     }
 
     snapshot = build_account_snapshot(
@@ -1486,9 +1497,7 @@ def test_select_active_half_hourly_agreement_raises_when_no_match_exists() -> No
         EonNextRatesUnsupportedError,
         match="active HalfHourlyTariff electricity agreement",
     ):
-        select_active_half_hourly_agreement(
-            account, datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
-        )
+        select_active_half_hourly_agreement(account, datetime(2026, 5, 1, 12, 0, tzinfo=UTC))
 
 
 def test_client_discovers_first_account_with_usable_snapshot() -> None:
@@ -1713,8 +1722,7 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
     assert snapshot.gas_meter_point_mprn == "1234567890"
 
 
-def test_async_get_account_snapshot_includes_smartflex_devices_and_planned_dispatches(
-) -> None:
+def test_async_get_account_snapshot_includes_smartflex_devices_and_planned_dispatches() -> None:
     agreement_payload = {
         "data": {
             "account": {
@@ -2263,6 +2271,33 @@ def test_client_refreshes_stale_token_before_reuse() -> None:
     assert session.requests[4]["headers"]["authorization"] == "JWT access-2"
 
 
+def test_client_logs_in_again_when_refresh_token_has_expired() -> None:
+    session = _FakeSession(
+        [
+            _token_payload("access-1", "refresh-1", 1),
+            _expired_refresh_token_error_payload(),
+            _token_payload("access-2", "refresh-2", 2000003600),
+        ]
+    )
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+    )
+
+    first_token = asyncio.run(client._async_access_token())
+    second_token = asyncio.run(client._async_access_token())
+
+    assert first_token == "access-1"
+    assert second_token == "access-2"
+    assert [request["json"]["query"] for request in session.requests] == [
+        LOGIN_MUTATION,
+        REFRESH_MUTATION,
+        LOGIN_MUTATION,
+    ]
+
+
 def test_client_retries_once_with_new_token_after_auth_failure() -> None:
     session = _FakeSession(
         [
@@ -2299,7 +2334,12 @@ def test_client_retries_once_with_new_token_after_auth_failure() -> None:
             },
         ]
     )
-    client = EonNextRatesClient(session, email="user@example.com", password="secret")
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+    )
 
     account_number = asyncio.run(client.async_discover_account_number())
 
@@ -2333,7 +2373,7 @@ def test_build_tariff_snapshot_rejects_non_half_hourly_tariffs() -> None:
             "displayName": "Legacy Two Rate",
             "tariffCode": "legacy",
             "standingCharge": 50.0,
-        }
+        },
     }
 
     with pytest.raises(EonNextRatesUnsupportedError, match="HalfHourlyTariff"):
@@ -2365,7 +2405,7 @@ def test_build_tariff_snapshot_raises_when_now_is_not_covered() -> None:
                     "validTo": "2026-05-01T05:00:00+00:00",
                 },
             ],
-        }
+        },
     }
 
     with pytest.raises(EonNextRatesUnsupportedError, match="No current HalfHourlyTariff window"):
@@ -2392,7 +2432,7 @@ def test_build_tariff_snapshot_returns_none_when_next_window_is_missing() -> Non
                     "validTo": "2026-04-30T23:00:00+00:00",
                 }
             ],
-        }
+        },
     }
 
     snapshot = build_account_snapshot(
@@ -2515,7 +2555,7 @@ def test_build_tariff_snapshot_raises_when_next_window_is_not_contiguous() -> No
                     "validTo": "2026-05-01T05:00:00+00:00",
                 },
             ],
-        }
+        },
     }
 
     with pytest.raises(EonNextRatesUnsupportedError, match="contiguous"):

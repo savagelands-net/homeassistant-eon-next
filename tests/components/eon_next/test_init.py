@@ -5,6 +5,7 @@ import sys
 import types
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -18,32 +19,30 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
         if name.startswith("homeassistant"):
             monkeypatch.delitem(sys.modules, name, raising=False)
 
-    homeassistant = types.ModuleType("homeassistant")
+    homeassistant: Any = types.ModuleType("homeassistant")
     homeassistant.__path__ = []
 
-    helpers = types.ModuleType("homeassistant.helpers")
+    helpers: Any = types.ModuleType("homeassistant.helpers")
     helpers.__path__ = []
 
-    aiohttp_client = types.ModuleType("homeassistant.helpers.aiohttp_client")
+    aiohttp_client: Any = types.ModuleType("homeassistant.helpers.aiohttp_client")
     aiohttp_client.async_get_clientsession = lambda hass: hass.client_session
     helpers.aiohttp_client = aiohttp_client
 
-    entity_registry = types.ModuleType("homeassistant.helpers.entity_registry")
+    entity_registry: Any = types.ModuleType("homeassistant.helpers.entity_registry")
 
     class _EntityRegistry:
         def __init__(self) -> None:
             self.entries: dict[str, str] = {}
 
-        def async_get_entity_id(
-            self, platform: str, domain: str, unique_id: str
-        ) -> str | None:
+        def async_get_entity_id(self, platform: str, domain: str, unique_id: str) -> str | None:
             return self.entries.get(unique_id)
 
     registry = _EntityRegistry()
     entity_registry.async_get = lambda hass: registry
     helpers.entity_registry = entity_registry
 
-    exceptions = types.ModuleType("homeassistant.exceptions")
+    exceptions: Any = types.ModuleType("homeassistant.exceptions")
 
     class ConfigEntryAuthFailed(Exception):
         pass
@@ -54,7 +53,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
     exceptions.ConfigEntryAuthFailed = ConfigEntryAuthFailed
     exceptions.ConfigEntryNotReady = ConfigEntryNotReady
 
-    core = types.ModuleType("homeassistant.core")
+    core: Any = types.ModuleType("homeassistant.core")
 
     class HomeAssistant:
         def __init__(self) -> None:
@@ -79,7 +78,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
 
     core.HomeAssistant = HomeAssistant
 
-    data_entry_flow = types.ModuleType("homeassistant.data_entry_flow")
+    data_entry_flow: Any = types.ModuleType("homeassistant.data_entry_flow")
 
     class FlowResultType:
         FORM = "form"
@@ -88,11 +87,11 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
 
     data_entry_flow.FlowResultType = FlowResultType
 
-    const = types.ModuleType("homeassistant.const")
+    const: Any = types.ModuleType("homeassistant.const")
     const.CONF_PASSWORD = "password"
     const.CONF_USERNAME = "username"
 
-    update_coordinator = types.ModuleType("homeassistant.helpers.update_coordinator")
+    update_coordinator: Any = types.ModuleType("homeassistant.helpers.update_coordinator")
 
     class UpdateFailed(Exception):
         pass
@@ -111,7 +110,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
     update_coordinator.DataUpdateCoordinator = DataUpdateCoordinator
     helpers.update_coordinator = update_coordinator
 
-    config_entries = types.ModuleType("homeassistant.config_entries")
+    config_entries: Any = types.ModuleType("homeassistant.config_entries")
 
     class ConfigFlow:
         def __init_subclass__(cls, **kwargs):
@@ -137,6 +136,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
             }
 
         def async_create_entry(self, *, title: str, data: dict[str, str]):
+            assert self._unique_id is not None
             self._configured_ids.add(self._unique_id)
             return {
                 "type": FlowResultType.CREATE_ENTRY,
@@ -295,9 +295,7 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
     monkeypatch.setattr(init_module, "EonNextRatesCoordinator", _Coordinator)
 
     def _unexpected_registry_lookup(*_args, **_kwargs):
-        raise AssertionError(
-            "async_setup_entry should not touch the entity registry during setup"
-        )
+        raise AssertionError("async_setup_entry should not touch the entity registry during setup")
 
     integration_stubs.async_get_entity_id = _unexpected_registry_lookup
 
@@ -392,9 +390,7 @@ async def test_config_flow_user_step_sets_unique_id_and_creates_entry(
     flow = config_flow_module.EonNextRatesConfigFlow()
     flow.hass = object()
 
-    result = await flow.async_step_user(
-        {"username": "user@example.com", "password": "secret"}
-    )
+    result = await flow.async_step_user({"username": "user@example.com", "password": "secret"})
 
     assert result == {
         "type": "create_entry",
@@ -420,9 +416,7 @@ async def test_config_flow_user_step_reports_invalid_auth(
     flow = config_flow_module.EonNextRatesConfigFlow()
     flow.hass = object()
 
-    result = await flow.async_step_user(
-        {"username": "user@example.com", "password": "secret"}
-    )
+    result = await flow.async_step_user({"username": "user@example.com", "password": "secret"})
 
     assert result["type"] == "form"
     assert result["errors"] == {"base": "invalid_auth"}
@@ -440,9 +434,7 @@ async def test_config_flow_user_step_reports_cannot_connect(
     flow = config_flow_module.EonNextRatesConfigFlow()
     flow.hass = object()
 
-    result = await flow.async_step_user(
-        {"username": "user@example.com", "password": "secret"}
-    )
+    result = await flow.async_step_user({"username": "user@example.com", "password": "secret"})
 
     assert result["type"] == "form"
     assert result["errors"] == {"base": "cannot_connect"}
@@ -460,9 +452,7 @@ async def test_config_flow_user_step_reports_unsupported_tariff(
     flow = config_flow_module.EonNextRatesConfigFlow()
     flow.hass = object()
 
-    result = await flow.async_step_user(
-        {"username": "user@example.com", "password": "secret"}
-    )
+    result = await flow.async_step_user({"username": "user@example.com", "password": "secret"})
 
     assert result["type"] == "form"
     assert result["errors"] == {"base": "unsupported_tariff"}

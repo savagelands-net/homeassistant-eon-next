@@ -14,5 +14,14 @@ asyncio_mode = "auto"
 target-version = "py313"
 line-length = 100
 
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+# Home Assistant supplies its runtime package; it is not a lightweight dev dependency.
+reportMissingImports = false
+
+[tool.typos.default.extend-words]
+hass = "hass"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

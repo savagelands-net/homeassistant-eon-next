@@ -1,19 +1,27 @@
 from __future__ import annotations
 
-try:
-    from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant
-except ModuleNotFoundError:  # Allows importing submodules in isolated unit tests.
-    ConfigEntry = object
-    HomeAssistant = object
+from typing import TYPE_CHECKING
 
 from .api import EonNextRatesClient
 from .const import DOMAIN, PLATFORMS
 
-try:
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.core import HomeAssistant
+
     from .coordinator import EonNextRatesCoordinator
-except ModuleNotFoundError:  # Allows importing submodules in isolated unit tests.
-    EonNextRatesCoordinator = object
+else:
+    try:
+        from homeassistant.config_entries import ConfigEntry
+        from homeassistant.core import HomeAssistant
+    except ModuleNotFoundError:  # Allows importing submodules in isolated unit tests.
+        ConfigEntry = object
+        HomeAssistant = object
+
+    try:
+        from .coordinator import EonNextRatesCoordinator
+    except ModuleNotFoundError:  # Allows importing submodules in isolated unit tests.
+        EonNextRatesCoordinator = object
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
