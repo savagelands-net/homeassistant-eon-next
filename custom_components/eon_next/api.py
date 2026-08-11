@@ -46,7 +46,7 @@ AGREEMENTS_QUERY = """query GetHalfHourlyTariff($accountNumber: String!) {
   account(accountNumber: $accountNumber) {
     number
     balance
-    bills(first: 1, orderBy: ISSUED_DATE_DESC) {
+    bills(first: 6, orderBy: ISSUED_DATE_DESC) {
       edges {
         node {
           __typename
@@ -1064,6 +1064,52 @@ def _statement_transaction_fields(statement: dict | None) -> dict[str, Any]:
     }
 
 
+_ELECTRICITY_STATEMENT_FIELDS = (
+    "latest_electricity_statement_total_gbp",
+    "latest_electricity_statement_quantity_kwh",
+    "latest_electricity_statement_usage_cost_gbp",
+    "latest_electricity_statement_standing_charge_gbp",
+)
+_GAS_STATEMENT_FIELDS = (
+    "latest_gas_statement_total_gbp",
+    "latest_gas_statement_quantity_kwh",
+)
+
+
+def _latest_statement_transaction_fields(
+    statements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    latest_fields = _statement_transaction_fields(None)
+    has_electricity_statement = False
+    has_gas_statement = False
+
+    for statement in statements:
+        fields = _statement_transaction_fields(statement)
+
+        direct_debit_at = fields["latest_direct_debit_at"]
+        if isinstance(direct_debit_at, datetime) and (
+            latest_fields["latest_direct_debit_at"] is None
+            or direct_debit_at > latest_fields["latest_direct_debit_at"]
+        ):
+            latest_fields["latest_direct_debit_at"] = direct_debit_at
+            latest_fields["latest_direct_debit_amount_gbp"] = fields[
+                "latest_direct_debit_amount_gbp"
+            ]
+
+        if (
+            not has_electricity_statement
+            and fields["latest_electricity_statement_total_gbp"] is not None
+        ):
+            latest_fields.update({field: fields[field] for field in _ELECTRICITY_STATEMENT_FIELDS})
+            has_electricity_statement = True
+
+        if not has_gas_statement and fields["latest_gas_statement_total_gbp"] is not None:
+            latest_fields.update({field: fields[field] for field in _GAS_STATEMENT_FIELDS})
+            has_gas_statement = True
+
+    return latest_fields
+
+
 def _parse_meter_reading_value(value: str | None) -> float | None:
     if value is None:
         return None
@@ -1089,7 +1135,7 @@ def _empty_meter_reading_fields(mpan: str | None) -> dict[str, Any]:
 
 
 def _billing_fields(account: dict) -> dict[str, Any]:
-    statement = None
+    statements: list[dict[str, Any]] = []
     bills = account.get("bills")
 
     if isinstance(bills, dict):
@@ -1099,16 +1145,14 @@ def _billing_fields(account: dict) -> dict[str, Any]:
                 if not isinstance(edge, dict):
                     continue
 
-                latest_bill = edge.get("node")
-                if not isinstance(latest_bill, dict):
+                bill = edge.get("node")
+                if not isinstance(bill, dict):
                     continue
 
-                if latest_bill.get("__typename") != "StatementType":
-                    continue
+                if bill.get("__typename") == "StatementType":
+                    statements.append(bill)
 
-                statement = latest_bill
-                break
-
+    statement = statements[0] if statements else None
     total_charges = statement.get("totalCharges") if isinstance(statement, dict) else None
     total_credits = statement.get("totalCredits") if isinstance(statement, dict) else None
 
@@ -1138,7 +1182,7 @@ def _billing_fields(account: dict) -> dict[str, Any]:
         "latest_statement_credits_gbp": _optional_minor_units_to_gbp(
             total_credits.get("grossTotal") if isinstance(total_credits, dict) else None
         ),
-        **_statement_transaction_fields(statement),
+        **_latest_statement_transaction_fields(statements),
     }
 
 

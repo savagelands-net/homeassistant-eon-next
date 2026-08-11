@@ -1014,6 +1014,69 @@ def test_build_account_snapshot_includes_latest_statement_breakdown() -> None:
     assert snapshot.latest_gas_statement_quantity_kwh == 2721.06
 
 
+def test_build_account_snapshot_selects_latest_statement_for_each_fuel() -> None:
+    latest_gas_statement = _statement_bill_node(
+        _statement_transaction_charge(
+            title="Gas",
+            posted_date="2026-05-19",
+            gross_total=3806,
+            quantity="486.9400",
+        )
+    )
+    latest_gas_statement.update(
+        {
+            "issuedDate": "2026-04-30",
+            "fromDate": "2026-03-30",
+            "toDate": "2026-04-29",
+            "openingBalance": 69399,
+            "closingBalance": 97952,
+            "paymentDueDate": "2026-05-20",
+            "totalCharges": {"grossTotal": 3806},
+        }
+    )
+    older_electricity_statement = _statement_bill_node(
+        _statement_transaction_payment(
+            title="Direct debit",
+            posted_date="2026-04-01",
+            gross_total=32359,
+        ),
+        _statement_transaction_charge(
+            title="Electricity",
+            posted_date="2026-04-19",
+            gross_total=12567,
+            quantity="512.3400",
+            usage_cost=11000,
+            supply_charge=1567,
+        ),
+    )
+
+    snapshot = build_account_snapshot(
+        _account_payload(
+            balance=88038,
+            bills=_bills_payload(latest_gas_statement, older_electricity_statement),
+        ),
+        _agreement_payload_with_meter_readings(),
+        datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
+    )
+
+    assert snapshot.current_account_balance_gbp == 880.38
+    assert snapshot.latest_statement_issued_at == datetime(2026, 4, 30, tzinfo=UTC)
+    assert snapshot.latest_statement_period_start == datetime(2026, 3, 30, tzinfo=UTC)
+    assert snapshot.latest_statement_period_end == datetime(2026, 4, 29, tzinfo=UTC)
+    assert snapshot.latest_statement_payment_due_at == datetime(2026, 5, 20, tzinfo=UTC)
+    assert snapshot.latest_statement_opening_balance_gbp == 693.99
+    assert snapshot.latest_statement_closing_balance_gbp == 979.52
+    assert snapshot.latest_statement_charges_gbp == 38.06
+    assert snapshot.latest_direct_debit_amount_gbp == 323.59
+    assert snapshot.latest_direct_debit_at == datetime(2026, 4, 1, tzinfo=UTC)
+    assert snapshot.latest_electricity_statement_total_gbp == 125.67
+    assert snapshot.latest_electricity_statement_quantity_kwh == 512.34
+    assert snapshot.latest_electricity_statement_usage_cost_gbp == 110.0
+    assert snapshot.latest_electricity_statement_standing_charge_gbp == 15.67
+    assert snapshot.latest_gas_statement_total_gbp == 38.06
+    assert snapshot.latest_gas_statement_quantity_kwh == 486.94
+
+
 def test_build_account_snapshot_returns_none_for_missing_statement_breakdown_rows() -> None:
     agreement = _agreement_payload_with_meter_readings()
     account = _account_payload(
@@ -1708,10 +1771,10 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
     assert session.requests[1]["json"]["query"] == VIEWER_QUERY
     assert session.requests[1]["headers"]["authorization"] == "JWT access-1"
     assert session.requests[2]["json"]["query"] == AGREEMENTS_QUERY
-    assert "bills(first: 1, orderBy: ISSUED_DATE_DESC)" in session.requests[2]["json"]["query"]
+    assert "bills(first: 6, orderBy: ISSUED_DATE_DESC)" in session.requests[2]["json"]["query"]
     assert session.requests[2]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert session.requests[3]["json"]["query"] == AGREEMENTS_QUERY
-    assert "bills(first: 1, orderBy: ISSUED_DATE_DESC)" in session.requests[3]["json"]["query"]
+    assert "bills(first: 6, orderBy: ISSUED_DATE_DESC)" in session.requests[3]["json"]["query"]
     assert session.requests[3]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert session.requests[4]["json"]["variables"] == {"accountNumber": "A-TEST0001"}
     assert len(session.requests) == 5
