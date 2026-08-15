@@ -65,6 +65,14 @@ custom_components/eon_next/
 tests/components/eon_next/
 ```
 
+## Releasing for HACS
+
+HACS updates are published as GitHub releases so it does not mistake a short commit SHA for
+a branch name. Keep the versions in `pyproject.toml` and
+`custom_components/eon_next/manifest.json` aligned, run `./scripts/check.sh`, then create a
+full GitHub release named `v<version>` from `main`. Creating only a Git tag is not sufficient.
+The standard GitHub source archive is used; no custom zip asset is required.
+
 ## Status
 
 This project is under active development.

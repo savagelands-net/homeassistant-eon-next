@@ -5,7 +5,10 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from aiohttp import ClientError  # pyright: ignore[reportMissingImports]
+from aiohttp import (  # pyright: ignore[reportMissingImports]
+    ClientError,
+    ClientResponseError,
+)
 
 from .const import GRAPHQL_URL
 
@@ -471,6 +474,12 @@ class EonNextRatesClient:
             ) as response:
                 response.raise_for_status()
                 payload = await response.json()
+        except ClientResponseError as err:
+            if err.status in (401, 403):
+                raise EonNextRatesAuthError(
+                    f"E.ON authentication failed with HTTP {err.status}"
+                ) from err
+            raise EonNextRatesConnectionError(str(err)) from err
         except (ClientError, OSError, TimeoutError) as err:
             raise EonNextRatesConnectionError(str(err)) from err
 
@@ -1384,8 +1393,8 @@ def _is_auth_error(errors: list[dict[str, Any]]) -> bool:
         if extensions.get("code") == "UNAUTHENTICATED":
             return True
 
-        # E.ON returns this validation error when a refresh token has expired.
-        if extensions.get("errorCode") == "KT-CT-1134":
+        # E.ON returns these validation errors for expired or rejected refresh tokens.
+        if extensions.get("errorCode") in {"KT-CT-1134", "KT-CT-1135"}:
             return True
 
         message_parts = [error.get("message"), extensions.get("errorDescription")]
@@ -1402,7 +1411,7 @@ def _is_auth_error(errors: list[dict[str, Any]]) -> bool:
             "auth" in message
             or "signature has expired" in message
             or "jwt" in message
-            or ("refresh token" in message and "expired" in message)
+            or "refresh token" in message
         ):
             return True
 

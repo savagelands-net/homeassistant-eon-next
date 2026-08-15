@@ -1,7 +1,10 @@
 {
   "domain": "eon_next",
   "name": "E.ON Next",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "documentation": "https://github.com/savagelands-net/homeassistant-eon-next",
+  "issue_tracker": "https://github.com/savagelands-net/homeassistant-eon-next/issues",
+  "codeowners": ["@savagemindz"],
   "config_flow": true,
   "integration_type": "service",
   "iot_class": "cloud_polling",

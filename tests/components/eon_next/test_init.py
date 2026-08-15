@@ -119,6 +119,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
         def __init__(self) -> None:
             self._unique_id = None
             self._configured_ids: set[str] = set()
+            self._reauth_entry = None
 
         async def async_set_unique_id(self, unique_id: str) -> None:
             self._unique_id = unique_id
@@ -126,6 +127,14 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
         def _abort_if_unique_id_configured(self) -> None:
             if self._unique_id in self._configured_ids:
                 raise _AbortFlow("already_configured")
+
+        def _get_reauth_entry(self):
+            assert self._reauth_entry is not None
+            return self._reauth_entry
+
+        def _abort_if_unique_id_mismatch(self) -> None:
+            if self._unique_id != self._get_reauth_entry().unique_id:
+                raise _AbortFlow("unique_id_mismatch")
 
         def async_show_form(self, *, step_id: str, data_schema=None, errors=None):
             return {
@@ -147,10 +156,17 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
         def async_abort(self, *, reason: str):
             return {"type": FlowResultType.ABORT, "reason": reason}
 
+        def async_update_reload_and_abort(self, entry, *, title: str, data_updates: dict[str, str]):
+            entry.title = title
+            entry.data.update(data_updates)
+            return self.async_abort(reason="reauth_successful")
+
     @dataclass
     class ConfigEntry:
         entry_id: str = "entry-123"
         data: dict[str, str] = field(default_factory=dict)
+        title: str = "E.ON Next"
+        unique_id: str | None = "A-TEST0001"
 
     config_entries.ConfigFlow = ConfigFlow
     config_entries.ConfigEntry = ConfigEntry
@@ -478,6 +494,79 @@ async def test_config_flow_user_step_aborts_when_account_is_already_configured(
 
     with pytest.raises(_AbortFlow, match="already_configured"):
         await flow.async_step_user({"username": "user@example.com", "password": "secret"})
+
+
+@pytest.mark.asyncio
+async def test_config_flow_reauth_updates_and_reloads_existing_entry(
+    config_flow_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _validate_input(hass, data):
+        return {
+            "title": "E.ON Next A-TEST0001",
+            "username": data["username"],
+            "password": data["password"],
+            "account_number": "A-TEST0001",
+        }
+
+    monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
+
+    entry = config_flow_module.config_entries.ConfigEntry(
+        data={
+            "username": "old@example.com",
+            "password": "old-secret",
+            "account_number": "A-TEST0001",
+        },
+        unique_id="A-TEST0001",
+    )
+    flow = config_flow_module.EonNextRatesConfigFlow()
+    flow.hass = object()
+    flow._reauth_entry = entry
+
+    initial_result = await flow.async_step_reauth(entry.data)
+    result = await flow.async_step_reauth_confirm(
+        {"username": "user@example.com", "password": "new-secret"}
+    )
+
+    assert initial_result["type"] == "form"
+    assert initial_result["step_id"] == "reauth_confirm"
+    assert result == {"type": "abort", "reason": "reauth_successful"}
+    assert entry.title == "E.ON Next A-TEST0001"
+    assert entry.data == {
+        "username": "user@example.com",
+        "password": "new-secret",
+        "account_number": "A-TEST0001",
+    }
+
+
+@pytest.mark.asyncio
+async def test_config_flow_reauth_reports_invalid_auth(
+    config_flow_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _validate_input(hass, data):
+        raise config_flow_module.EonNextRatesAuthError
+
+    monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
+
+    entry = config_flow_module.config_entries.ConfigEntry(
+        data={
+            "username": "user@example.com",
+            "password": "old-secret",
+            "account_number": "A-TEST0001",
+        },
+        unique_id="A-TEST0001",
+    )
+    flow = config_flow_module.EonNextRatesConfigFlow()
+    flow.hass = object()
+    flow._reauth_entry = entry
+
+    result = await flow.async_step_reauth_confirm(
+        {"username": "user@example.com", "password": "wrong-secret"}
+    )
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "reauth_confirm"
+    assert result["errors"] == {"base": "invalid_auth"}
+    assert entry.data["password"] == "old-secret"
 
 
 @pytest.mark.asyncio

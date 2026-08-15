@@ -1,6 +1,6 @@
 [project]
 name = "homeassistant-eon-next"
-version = "0.1.0"
+version = "0.1.1"
 description = "Home Assistant custom integration for E.ON Next"
 readme = "README.md"
 requires-python = ">=3.13"

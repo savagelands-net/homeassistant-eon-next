@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest  # pyright: ignore[reportMissingImports]
+from aiohttp import ClientResponseError  # pyright: ignore[reportMissingImports]
 
 from custom_components.eon_next.api import (
     AGREEMENTS_QUERY,
@@ -33,8 +34,9 @@ _UNSET = object()
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: dict[str, Any], *, status: int = 200) -> None:
         self._payload = payload
+        self._status = status
 
     async def __aenter__(self) -> _FakeResponse:
         return self
@@ -46,17 +48,26 @@ class _FakeResponse:
         return self._payload
 
     def raise_for_status(self) -> None:
-        return None
+        if self._status < 400:
+            return
+
+        raise ClientResponseError(
+            request_info=None,  # type: ignore[arg-type]
+            history=(),
+            status=self._status,
+            message="Forbidden",
+        )
 
 
 class _FakeSession:
-    def __init__(self, responses: list[dict[str, Any]]) -> None:
+    def __init__(self, responses: list[dict[str, Any] | _FakeResponse]) -> None:
         self._responses = responses
         self.requests: list[dict[str, Any]] = []
 
     def post(self, url: str, *, json: dict[str, Any], headers: dict[str, str]):
         self.requests.append({"url": url, "json": json, "headers": headers})
-        return _FakeResponse(self._responses.pop(0))
+        response = self._responses.pop(0)
+        return response if isinstance(response, _FakeResponse) else _FakeResponse(response)
 
 
 def _token_payload(token: str, refresh_token: str, exp: int) -> dict[str, Any]:
@@ -545,7 +556,7 @@ def _auth_error_payload() -> dict[str, Any]:
     }
 
 
-def _expired_refresh_token_error_payload() -> dict[str, Any]:
+def _refresh_token_error_payload(error_code: str, description: str) -> dict[str, Any]:
     return {
         "errors": [
             {
@@ -554,12 +565,12 @@ def _expired_refresh_token_error_payload() -> dict[str, Any]:
                 "path": ["obtainKrakenToken"],
                 "extensions": {
                     "errorType": "VALIDATION",
-                    "errorCode": "KT-CT-1134",
-                    "errorDescription": "The refresh token has expired.",
+                    "errorCode": error_code,
+                    "errorDescription": description,
                     "errorClass": "VALIDATION",
                     "validationErrors": [
                         {
-                            "message": "The refresh token has expired.",
+                            "message": description,
                             "inputPath": ["input", "refreshToken"],
                         }
                     ],
@@ -2334,11 +2345,20 @@ def test_client_refreshes_stale_token_before_reuse() -> None:
     assert session.requests[4]["headers"]["authorization"] == "JWT access-2"
 
 
-def test_client_logs_in_again_when_refresh_token_has_expired() -> None:
+@pytest.mark.parametrize(
+    ("error_code", "description"),
+    [
+        ("KT-CT-1134", "The refresh token has expired."),
+        ("KT-CT-1135", "Please make sure the refresh token is correct."),
+    ],
+)
+def test_client_logs_in_again_when_refresh_token_is_rejected(
+    error_code: str, description: str
+) -> None:
     session = _FakeSession(
         [
             _token_payload("access-1", "refresh-1", 1),
-            _expired_refresh_token_error_payload(),
+            _refresh_token_error_payload(error_code, description),
             _token_payload("access-2", "refresh-2", 2000003600),
         ]
     )
@@ -2359,6 +2379,59 @@ def test_client_logs_in_again_when_refresh_token_has_expired() -> None:
         REFRESH_MUTATION,
         LOGIN_MUTATION,
     ]
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_client_logs_in_again_when_refresh_request_is_rejected(status: int) -> None:
+    session = _FakeSession(
+        [
+            _token_payload("access-1", "refresh-1", 1),
+            _FakeResponse({}, status=status),
+            _token_payload("access-2", "refresh-2", 2000003600),
+        ]
+    )
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+    )
+
+    first_token = asyncio.run(client._async_access_token())
+    second_token = asyncio.run(client._async_access_token())
+
+    assert first_token == "access-1"
+    assert second_token == "access-2"
+    assert [request["json"]["query"] for request in session.requests] == [
+        LOGIN_MUTATION,
+        REFRESH_MUTATION,
+        LOGIN_MUTATION,
+    ]
+
+
+def test_client_refreshes_and_retries_after_authenticated_http_403() -> None:
+    viewer_payload = _viewer_payload()
+    session = _FakeSession(
+        [
+            _token_payload("access-1", "refresh-1", 2000000000),
+            _FakeResponse({}, status=403),
+            _token_payload("access-2", "refresh-2", 2000003600),
+            viewer_payload,
+        ]
+    )
+    client = EonNextRatesClient(session, email="user@example.com", password="secret")
+
+    data = asyncio.run(client._async_authenticated_graphql(VIEWER_QUERY))
+
+    assert data == viewer_payload["data"]
+    assert [request["json"]["query"] for request in session.requests] == [
+        LOGIN_MUTATION,
+        VIEWER_QUERY,
+        REFRESH_MUTATION,
+        VIEWER_QUERY,
+    ]
+    assert session.requests[1]["headers"]["authorization"] == "JWT access-1"
+    assert session.requests[3]["headers"]["authorization"] == "JWT access-2"
 
 
 def test_client_retries_once_with_new_token_after_auth_failure() -> None:

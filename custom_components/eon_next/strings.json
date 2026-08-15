@@ -7,6 +7,14 @@
           "username": "Email",
           "password": "Password"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect E.ON Next",
+        "description": "E.ON Next could not sign in. Enter your account credentials again.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -15,7 +23,9 @@
       "unsupported_tariff": "This account does not expose a supported half-hourly tariff"
     },
     "abort": {
-      "already_configured": "Account is already configured"
+      "already_configured": "Account is already configured",
+      "reauth_successful": "Authentication updated successfully",
+      "unique_id_mismatch": "These credentials belong to a different E.ON Next account"
     }
   }
 }
