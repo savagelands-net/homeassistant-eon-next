@@ -475,6 +475,10 @@ class EonNextRatesClient:
                 response.raise_for_status()
                 payload = await response.json()
         except ClientResponseError as err:
+            if err.status == 403 and query == LOGIN_MUTATION:
+                raise EonNextRatesConnectionError(
+                    "E.ON temporarily rejected the login request with HTTP 403"
+                ) from err
             if err.status in (401, 403):
                 raise EonNextRatesAuthError(
                     f"E.ON authentication failed with HTTP {err.status}"
@@ -1393,8 +1397,12 @@ def _is_auth_error(errors: list[dict[str, Any]]) -> bool:
         if extensions.get("code") == "UNAUTHENTICATED":
             return True
 
+        error_code = extensions.get("errorCode")
         # E.ON returns these validation errors for expired or rejected refresh tokens.
-        if extensions.get("errorCode") in {"KT-CT-1134", "KT-CT-1135"}:
+        if error_code in {"KT-CT-1134", "KT-CT-1135"}:
+            return True
+        # Invalid email/password responses use HTTP 200 with this GraphQL error code.
+        if error_code == "KT-CT-1138":
             return True
 
         message_parts = [error.get("message"), extensions.get("errorDescription")]

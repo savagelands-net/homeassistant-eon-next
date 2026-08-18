@@ -1,7 +1,7 @@
 {
   "domain": "eon_next",
   "name": "E.ON Next",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "documentation": "https://github.com/savagelands-net/homeassistant-eon-next",
   "issue_tracker": "https://github.com/savagelands-net/homeassistant-eon-next/issues",
   "codeowners": ["@savagemindz"],

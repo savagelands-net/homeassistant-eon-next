@@ -17,6 +17,7 @@ from custom_components.eon_next.api import (
     AccountSnapshot,
     EonNextRatesAuthError,
     EonNextRatesClient,
+    EonNextRatesConnectionError,
     EonNextRatesUnsupportedError,
     SmartFlexChargingSessionSnapshot,
     SmartFlexDeviceSnapshot,
@@ -577,6 +578,35 @@ def _refresh_token_error_payload(error_code: str, description: str) -> dict[str,
                 },
             }
         ]
+    }
+
+
+def _credentials_error_payload() -> dict[str, Any]:
+    description = "Please make sure the credentials are correct."
+    return {
+        "errors": [
+            {
+                "message": "Invalid data.",
+                "path": ["obtainKrakenToken"],
+                "extensions": {
+                    "errorType": "VALIDATION",
+                    "errorCode": "KT-CT-1138",
+                    "errorDescription": description,
+                    "errorClass": "VALIDATION",
+                    "validationErrors": [
+                        {
+                            "message": description,
+                            "inputPath": ["input", "email"],
+                        },
+                        {
+                            "message": description,
+                            "inputPath": ["input", "password"],
+                        },
+                    ],
+                },
+            }
+        ],
+        "data": {"obtainKrakenToken": None},
     }
 
 
@@ -2343,6 +2373,27 @@ def test_client_refreshes_stale_token_before_reuse() -> None:
     assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
     assert session.requests[3]["json"]["query"] == REFRESH_MUTATION
     assert session.requests[4]["headers"]["authorization"] == "JWT access-2"
+
+
+def test_client_treats_login_http_403_as_connection_error() -> None:
+    session = _FakeSession([_FakeResponse({}, status=403)])
+    client = EonNextRatesClient(session, email="user@example.com", password="secret")
+
+    with pytest.raises(
+        EonNextRatesConnectionError,
+        match="temporarily rejected the login request with HTTP 403",
+    ):
+        asyncio.run(client._async_access_token())
+
+    assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
+
+
+def test_client_treats_rejected_credentials_as_auth_error() -> None:
+    session = _FakeSession([_credentials_error_payload()])
+    client = EonNextRatesClient(session, email="user@example.com", password="wrong-secret")
+
+    with pytest.raises(EonNextRatesAuthError, match="KT-CT-1138"):
+        asyncio.run(client._async_access_token())
 
 
 @pytest.mark.parametrize(
