@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from aiohttp import (  # pyright: ignore[reportMissingImports]
@@ -475,10 +475,11 @@ class EonNextRatesClient:
                 response.raise_for_status()
                 payload = await response.json()
         except ClientResponseError as err:
-            if err.status == 403 and query == LOGIN_MUTATION:
-                raise EonNextRatesConnectionError(
-                    "E.ON temporarily rejected the login request with HTTP 403"
-                ) from err
+            if err.status == 403:
+                if query == LOGIN_MUTATION:
+                    raise EonNextRatesConnectionError(
+                        "E.ON temporarily rejected the login request with HTTP 403"
+                    ) from err
             if err.status in (401, 403):
                 raise EonNextRatesAuthError(
                     f"E.ON authentication failed with HTTP {err.status}"
@@ -660,8 +661,9 @@ class EonNextRatesClient:
         self._token = token
         self._token_expires_at = _token_expiry_datetime(token_payload["payload"])
         self._refresh_token = token_payload["refreshToken"]
-        self._refresh_token_expires_at = self._now() + timedelta(
-            seconds=token_payload["refreshExpiresIn"]
+        # Despite its name, E.ON returns refreshExpiresIn as a Unix timestamp.
+        self._refresh_token_expires_at = datetime.fromtimestamp(
+            token_payload["refreshExpiresIn"], UTC
         )
         return token
 

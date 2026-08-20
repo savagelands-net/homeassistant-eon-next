@@ -71,14 +71,20 @@ class _FakeSession:
         return response if isinstance(response, _FakeResponse) else _FakeResponse(response)
 
 
-def _token_payload(token: str, refresh_token: str, exp: int) -> dict[str, Any]:
+def _token_payload(
+    token: str,
+    refresh_token: str,
+    exp: int,
+    *,
+    refresh_expires_at: int = 2_000_007_200,
+) -> dict[str, Any]:
     return {
         "data": {
             "obtainKrakenToken": {
                 "token": token,
                 "refreshToken": refresh_token,
                 "payload": {"exp": exp},
-                "refreshExpiresIn": 3600,
+                "refreshExpiresIn": refresh_expires_at,
                 "__typename": "ObtainJSONWebToken",
             }
         }
@@ -2373,6 +2379,50 @@ def test_client_refreshes_stale_token_before_reuse() -> None:
     assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
     assert session.requests[3]["json"]["query"] == REFRESH_MUTATION
     assert session.requests[4]["headers"]["authorization"] == "JWT access-2"
+
+
+def test_client_stores_refresh_expiry_as_unix_timestamp() -> None:
+    refresh_expires_at = 2_000_007_200
+    session = _FakeSession(
+        [
+            _token_payload(
+                "access-1",
+                "refresh-1",
+                2_000_000_000,
+                refresh_expires_at=refresh_expires_at,
+            )
+        ]
+    )
+    client = EonNextRatesClient(session, email="user@example.com", password="secret")
+
+    asyncio.run(client._async_access_token())
+
+    assert client._refresh_token_expires_at == datetime.fromtimestamp(refresh_expires_at, UTC)
+
+
+def test_client_logs_in_again_when_refresh_expiry_timestamp_has_passed() -> None:
+    session = _FakeSession(
+        [
+            _token_payload("access-1", "refresh-1", 1, refresh_expires_at=1),
+            _token_payload("access-2", "refresh-2", 2_000_003_600),
+        ]
+    )
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+    )
+
+    first_token = asyncio.run(client._async_access_token())
+    second_token = asyncio.run(client._async_access_token())
+
+    assert first_token == "access-1"
+    assert second_token == "access-2"
+    assert [request["json"]["query"] for request in session.requests] == [
+        LOGIN_MUTATION,
+        LOGIN_MUTATION,
+    ]
 
 
 def test_client_treats_login_http_403_as_connection_error() -> None:
