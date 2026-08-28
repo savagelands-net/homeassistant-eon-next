@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from aiohttp import CookieJar
 
 from custom_components.eon_next.api import AccountSnapshot
 from custom_components.eon_next.const import DOMAIN, PLATFORMS
@@ -26,6 +27,21 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
     helpers.__path__ = []
 
     aiohttp_client: Any = types.ModuleType("homeassistant.helpers.aiohttp_client")
+
+    class _ClientSession:
+        def __init__(self, kwargs: dict[str, Any]) -> None:
+            self.kwargs = kwargs
+            self.detached = False
+
+        def detach(self) -> None:
+            self.detached = True
+
+    def _async_create_clientsession(hass, **kwargs):
+        session = _ClientSession(kwargs)
+        hass.created_client_sessions.append(session)
+        return session
+
+    aiohttp_client.async_create_clientsession = _async_create_clientsession
     aiohttp_client.async_get_clientsession = lambda hass: hass.client_session
     helpers.aiohttp_client = aiohttp_client
 
@@ -62,9 +78,12 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
             self.config_entries = types.SimpleNamespace(
                 async_forward_entry_setups=self._async_forward_entry_setups,
                 async_unload_platforms=self._async_unload_platforms,
+                async_update_entry=self._async_update_entry,
             )
+            self.created_client_sessions: list[_ClientSession] = []
             self.forward_calls: list[tuple[object, list[str]]] = []
             self.unload_calls: list[tuple[object, list[str]]] = []
+            self.update_calls: list[tuple[object, dict[str, Any]]] = []
             self.forward_result = True
             self.unload_result = True
 
@@ -75,6 +94,10 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
         async def _async_unload_platforms(self, entry, platforms):
             self.unload_calls.append((entry, list(platforms)))
             return self.unload_result
+
+        def _async_update_entry(self, entry, *, data):
+            entry.data = data
+            self.update_calls.append((entry, data))
 
     core.HomeAssistant = HomeAssistant
 
@@ -144,7 +167,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
                 "errors": errors or {},
             }
 
-        def async_create_entry(self, *, title: str, data: dict[str, str]):
+        def async_create_entry(self, *, title: str, data: dict[str, Any]):
             assert self._unique_id is not None
             self._configured_ids.add(self._unique_id)
             return {
@@ -156,7 +179,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
         def async_abort(self, *, reason: str):
             return {"type": FlowResultType.ABORT, "reason": reason}
 
-        def async_update_reload_and_abort(self, entry, *, title: str, data_updates: dict[str, str]):
+        def async_update_reload_and_abort(self, entry, *, title: str, data_updates: dict[str, Any]):
             entry.title = title
             entry.data.update(data_updates)
             return self.async_abort(reason="reauth_successful")
@@ -164,7 +187,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
     @dataclass
     class ConfigEntry:
         entry_id: str = "entry-123"
-        data: dict[str, str] = field(default_factory=dict)
+        data: dict[str, Any] = field(default_factory=dict)
         title: str = "E.ON Next"
         unique_id: str | None = "A-TEST0001"
 
@@ -287,16 +310,31 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
             "username": "user@example.com",
             "password": "secret",
             "account_number": "A-TEST0001",
+            "refresh_token": "refresh-1",
+            "refresh_token_expires_at": 2_000_007_200,
         },
     )
     created: dict[str, object] = {}
 
     class _Client:
-        def __init__(self, session, *, email: str, password: str, account_number: str) -> None:
+        def __init__(
+            self,
+            session,
+            *,
+            email: str,
+            password: str,
+            account_number: str,
+            refresh_token: str | None,
+            refresh_token_expires_at: int | None,
+            token_state_callback,
+        ) -> None:
             created["session"] = session
             created["email"] = email
             created["password"] = password
             created["account_number"] = account_number
+            created["refresh_token"] = refresh_token
+            created["refresh_token_expires_at"] = refresh_token_expires_at
+            self.token_state_callback = token_state_callback
 
     class _Coordinator:
         def __init__(self, hass, client) -> None:
@@ -306,6 +344,7 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
 
         async def async_config_entry_first_refresh(self) -> None:
             self.first_refreshes += 1
+            self.client.token_state_callback("refresh-2", 2_000_010_800)
 
     monkeypatch.setattr(init_module, "EonNextRatesClient", _Client)
     monkeypatch.setattr(init_module, "EonNextRatesCoordinator", _Coordinator)
@@ -318,12 +357,21 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
     result = await init_module.async_setup_entry(hass, entry)
 
     assert result is True
+    assert len(hass.created_client_sessions) == 1
+    session = hass.created_client_sessions[0]
     assert created == {
-        "session": hass.client_session,
+        "session": session,
         "email": "user@example.com",
         "password": "secret",
         "account_number": "A-TEST0001",
+        "refresh_token": "refresh-1",
+        "refresh_token_expires_at": 2_000_007_200,
     }
+    assert isinstance(session.kwargs["cookie_jar"], CookieJar)
+    assert session.detached is False
+    assert entry.data["refresh_token"] == "refresh-2"
+    assert entry.data["refresh_token_expires_at"] == 2_000_010_800
+    assert hass.update_calls == [(entry, entry.data)]
     stored = hass.data[DOMAIN]["entry-123"]
     assert isinstance(stored["coordinator"], _Coordinator)
     assert isinstance(stored["client"], _Client)
@@ -355,13 +403,15 @@ async def test_async_unload_entry_unloads_platforms_and_clears_storage(init_modu
 async def test_async_step_user_creates_entry_after_validating_account(
     config_flow_module, monkeypatch: pytest.MonkeyPatch, snapshot
 ) -> None:
-    captured: dict[str, str] = {}
+    captured: dict[str, object] = {}
 
     class _Client:
         def __init__(self, session, *, email: str, password: str) -> None:
             captured["session"] = session
             captured["email"] = email
             captured["password"] = password
+            self.refresh_token = "refresh-1"
+            self.refresh_token_expires_at = 2_000_007_200
 
         async def async_discover_account_number(self) -> str:
             return "A-TEST0001"
@@ -371,8 +421,9 @@ async def test_async_step_user_creates_entry_after_validating_account(
 
     monkeypatch.setattr(config_flow_module, "EonNextRatesClient", _Client)
 
+    hass = config_flow_module.HomeAssistant()
     result = await config_flow_module.validate_input(
-        hass=types.SimpleNamespace(client_session="session"),
+        hass=hass,
         data={"username": "user@example.com", "password": "secret"},
     )
 
@@ -381,12 +432,18 @@ async def test_async_step_user_creates_entry_after_validating_account(
         "username": "user@example.com",
         "password": "secret",
         "account_number": "A-TEST0001",
+        "refresh_token": "refresh-1",
+        "refresh_token_expires_at": 2_000_007_200,
     }
+    session = hass.created_client_sessions[0]
     assert captured == {
-        "session": "session",
+        "session": session,
         "email": "user@example.com",
         "password": "secret",
     }
+    assert session.kwargs["auto_cleanup"] is False
+    assert isinstance(session.kwargs["cookie_jar"], CookieJar)
+    assert session.detached is True
 
 
 @pytest.mark.asyncio
@@ -399,6 +456,8 @@ async def test_config_flow_user_step_sets_unique_id_and_creates_entry(
             "username": data["username"],
             "password": data["password"],
             "account_number": "A-TEST0001",
+            "refresh_token": "refresh-1",
+            "refresh_token_expires_at": 2_000_007_200,
         }
 
     monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
@@ -415,6 +474,8 @@ async def test_config_flow_user_step_sets_unique_id_and_creates_entry(
             "username": "user@example.com",
             "password": "secret",
             "account_number": "A-TEST0001",
+            "refresh_token": "refresh-1",
+            "refresh_token_expires_at": 2_000_007_200,
         },
     }
     assert flow._unique_id == "A-TEST0001"
@@ -484,6 +545,8 @@ async def test_config_flow_user_step_aborts_when_account_is_already_configured(
             "username": data["username"],
             "password": data["password"],
             "account_number": "A-TEST0001",
+            "refresh_token": "refresh-1",
+            "refresh_token_expires_at": 2_000_007_200,
         }
 
     monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
@@ -506,6 +569,8 @@ async def test_config_flow_reauth_updates_and_reloads_existing_entry(
             "username": data["username"],
             "password": data["password"],
             "account_number": "A-TEST0001",
+            "refresh_token": "refresh-2",
+            "refresh_token_expires_at": 2_000_010_800,
         }
 
     monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
@@ -535,6 +600,8 @@ async def test_config_flow_reauth_updates_and_reloads_existing_entry(
         "username": "user@example.com",
         "password": "new-secret",
         "account_number": "A-TEST0001",
+        "refresh_token": "refresh-2",
+        "refresh_token_expires_at": 2_000_010_800,
     }
 
 

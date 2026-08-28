@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest  # pyright: ignore[reportMissingImports]
 from aiohttp import ClientResponseError  # pyright: ignore[reportMissingImports]
+from multidict import CIMultiDict  # pyright: ignore[reportMissingImports]
 
 from custom_components.eon_next.api import (
     AGREEMENTS_QUERY,
@@ -35,9 +36,17 @@ _UNSET = object()
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict[str, Any], *, status: int = 200) -> None:
+    def __init__(
+        self,
+        payload: dict[str, Any],
+        *,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self._payload = payload
         self._status = status
+        self.status = status
+        self.headers = CIMultiDict(headers or {})
 
     async def __aenter__(self) -> _FakeResponse:
         return self
@@ -57,6 +66,7 @@ class _FakeResponse:
             history=(),
             status=self._status,
             message="Forbidden",
+            headers=self.headers,
         )
 
 
@@ -2400,6 +2410,31 @@ def test_client_stores_refresh_expiry_as_unix_timestamp() -> None:
     assert client._refresh_token_expires_at == datetime.fromtimestamp(refresh_expires_at, UTC)
 
 
+def test_client_uses_persisted_refresh_token_before_password_login() -> None:
+    token_updates: list[tuple[str | None, int | None]] = []
+    session = _FakeSession([_token_payload("access-2", "refresh-2", 2_000_003_600)])
+    client = EonNextRatesClient(
+        session,
+        email="user@example.com",
+        password="secret",
+        refresh_token="refresh-1",
+        refresh_token_expires_at=2_000_007_200,
+        token_state_callback=lambda token, expires_at: token_updates.append((token, expires_at)),
+        now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
+    )
+
+    token = asyncio.run(client._async_access_token())
+
+    assert token == "access-2"
+    assert session.requests[0]["json"] == {
+        "query": REFRESH_MUTATION,
+        "variables": {"input": {"refreshToken": "refresh-1"}},
+    }
+    assert client.refresh_token == "refresh-2"
+    assert client.refresh_token_expires_at == 2_000_007_200
+    assert token_updates == [("refresh-2", 2_000_007_200)]
+
+
 def test_client_logs_in_again_when_refresh_expiry_timestamp_has_passed() -> None:
     session = _FakeSession(
         [
@@ -2425,16 +2460,34 @@ def test_client_logs_in_again_when_refresh_expiry_timestamp_has_passed() -> None
     ]
 
 
-def test_client_treats_login_http_403_as_connection_error() -> None:
-    session = _FakeSession([_FakeResponse({}, status=403)])
+def test_client_treats_login_http_403_as_connection_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = _FakeSession(
+        [
+            _FakeResponse(
+                {},
+                status=403,
+                headers={
+                    "retry-after": "120",
+                    "set-cookie": "private-load-balancer-cookie",
+                    "x-amz-cf-id": "cloudfront-request-123",
+                    "x-kraken-correlation-id": "kraken-request-456",
+                },
+            )
+        ]
+    )
     client = EonNextRatesClient(session, email="user@example.com", password="secret")
 
     with pytest.raises(
         EonNextRatesConnectionError,
-        match="temporarily rejected the login request with HTTP 403",
+        match="retry_after=120.*cloudfront_id=cloudfront-request-123.*"
+        "correlation_id=kraken-request-456",
     ):
         asyncio.run(client._async_access_token())
 
+    assert "private-load-balancer-cookie" not in caplog.text
+    assert "correlation_id=kraken-request-456" in caplog.text
     assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
 
 
@@ -2456,6 +2509,7 @@ def test_client_treats_rejected_credentials_as_auth_error() -> None:
 def test_client_logs_in_again_when_refresh_token_is_rejected(
     error_code: str, description: str
 ) -> None:
+    token_updates: list[tuple[str | None, int | None]] = []
     session = _FakeSession(
         [
             _token_payload("access-1", "refresh-1", 1),
@@ -2467,6 +2521,7 @@ def test_client_logs_in_again_when_refresh_token_is_rejected(
         session,
         email="user@example.com",
         password="secret",
+        token_state_callback=lambda token, expires_at: token_updates.append((token, expires_at)),
         now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
     )
 
@@ -2479,6 +2534,11 @@ def test_client_logs_in_again_when_refresh_token_is_rejected(
         LOGIN_MUTATION,
         REFRESH_MUTATION,
         LOGIN_MUTATION,
+    ]
+    assert token_updates == [
+        ("refresh-1", 2_000_007_200),
+        (None, None),
+        ("refresh-2", 2_000_007_200),
     ]
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -11,6 +12,15 @@ from aiohttp import (  # pyright: ignore[reportMissingImports]
 )
 
 from .const import GRAPHQL_URL
+
+_LOGGER = logging.getLogger(__name__)
+
+_HTTP_DIAGNOSTIC_HEADERS = {
+    "retry-after": "retry_after",
+    "x-amz-cf-id": "cloudfront_id",
+    "x-cache": "cache",
+    "x-kraken-correlation-id": "correlation_id",
+}
 
 LOGIN_MUTATION = """mutation loginEmailAuthentication($input: ObtainJSONWebTokenInput!) {
   obtainKrakenToken(input: $input) {
@@ -399,6 +409,20 @@ class EonNextRatesUnsupportedError(EonNextRatesError):
     pass
 
 
+def _http_response_diagnostics(headers: Mapping[str, str] | None) -> str:
+    if not headers:
+        return ""
+
+    normalized_headers = {key.lower(): value for key, value in headers.items()}
+    diagnostics = []
+    for header, label in _HTTP_DIAGNOSTIC_HEADERS.items():
+        if value := normalized_headers.get(header):
+            safe_value = " ".join(str(value).split())[:200]
+            diagnostics.append(f"{label}={safe_value}")
+
+    return ", ".join(diagnostics)
+
+
 def select_account_number(viewer: dict, supported_account_numbers: set[str] | None = None) -> str:
     accounts = viewer.get("accounts", [])
     if not accounts:
@@ -445,6 +469,9 @@ class EonNextRatesClient:
         email: str,
         password: str,
         account_number: str | None = None,
+        refresh_token: str | None = None,
+        refresh_token_expires_at: int | None = None,
+        token_state_callback: Callable[[str | None, int | None], None] | None = None,
         graphql_url: str = GRAPHQL_URL,
         now: Callable[[], datetime] | None = None,
     ) -> None:
@@ -455,9 +482,28 @@ class EonNextRatesClient:
         self._now = now or (lambda: datetime.now(UTC))
         self._token: str | None = None
         self._token_expires_at: datetime | None = None
-        self._refresh_token: str | None = None
+        self._refresh_token = refresh_token
         self._refresh_token_expires_at: datetime | None = None
+        self._refresh_token_expires_at_timestamp: int | None = None
+        if refresh_token_expires_at is not None:
+            try:
+                self._refresh_token_expires_at = datetime.fromtimestamp(
+                    refresh_token_expires_at, UTC
+                )
+            except (OSError, OverflowError, ValueError):
+                self._refresh_token = None
+            else:
+                self._refresh_token_expires_at_timestamp = refresh_token_expires_at
+        self._token_state_callback = token_state_callback
         self._account_number = account_number
+
+    @property
+    def refresh_token(self) -> str | None:
+        return self._refresh_token
+
+    @property
+    def refresh_token_expires_at(self) -> int | None:
+        return self._refresh_token_expires_at_timestamp
 
     async def _graphql(
         self, query: str, variables: dict | None = None, token: str | None = None
@@ -477,9 +523,11 @@ class EonNextRatesClient:
         except ClientResponseError as err:
             if err.status == 403:
                 if query == LOGIN_MUTATION:
-                    raise EonNextRatesConnectionError(
-                        "E.ON temporarily rejected the login request with HTTP 403"
-                    ) from err
+                    message = "E.ON temporarily rejected the login request with HTTP 403"
+                    if diagnostics := _http_response_diagnostics(err.headers):
+                        message = f"{message} ({diagnostics})"
+                    _LOGGER.warning(message)
+                    raise EonNextRatesConnectionError(message) from err
             if err.status in (401, 403):
                 raise EonNextRatesAuthError(
                     f"E.ON authentication failed with HTTP {err.status}"
@@ -514,8 +562,7 @@ class EonNextRatesClient:
             self._refresh_token_expires_at is not None
             and self._refresh_token_expires_at <= self._now()
         ):
-            self._refresh_token = None
-            self._refresh_token_expires_at = None
+            self._clear_refresh_token()
             return await self._async_login()
 
         try:
@@ -524,8 +571,7 @@ class EonNextRatesClient:
                 {"input": {"refreshToken": self._refresh_token}},
             )
         except EonNextRatesAuthError:
-            self._refresh_token = None
-            self._refresh_token_expires_at = None
+            self._clear_refresh_token()
             return await self._async_login()
 
         return self._store_token_state(data["obtainKrakenToken"])
@@ -653,18 +699,36 @@ class EonNextRatesClient:
 
     def _store_token_state(self, token_payload: dict[str, Any]) -> str:
         token = token_payload.get("token")
+        refresh_token = token_payload.get("refreshToken")
+        refresh_expires_at = token_payload.get("refreshExpiresIn")
         if not isinstance(token, str):
             raise EonNextRatesConnectionError(
                 "GraphQL token response did not include an access token"
             )
+        if (
+            not isinstance(refresh_token, str)
+            or not isinstance(refresh_expires_at, int)
+            or isinstance(refresh_expires_at, bool)
+        ):
+            raise EonNextRatesConnectionError(
+                "GraphQL token response did not include valid refresh-token state"
+            )
+
+        # Despite its name, E.ON returns refreshExpiresIn as a Unix timestamp.
+        try:
+            refresh_expiry = datetime.fromtimestamp(refresh_expires_at, UTC)
+        except (OSError, OverflowError, ValueError) as err:
+            raise EonNextRatesConnectionError(
+                "GraphQL token response included an invalid refresh-token expiry"
+            ) from err
 
         self._token = token
-        self._token_expires_at = _token_expiry_datetime(token_payload["payload"])
-        self._refresh_token = token_payload["refreshToken"]
-        # Despite its name, E.ON returns refreshExpiresIn as a Unix timestamp.
-        self._refresh_token_expires_at = datetime.fromtimestamp(
-            token_payload["refreshExpiresIn"], UTC
-        )
+        self._token_expires_at = _token_expiry_datetime(token_payload.get("payload"))
+        self._refresh_token = refresh_token
+        self._refresh_token_expires_at = refresh_expiry
+        self._refresh_token_expires_at_timestamp = refresh_expires_at
+        if self._token_state_callback is not None:
+            self._token_state_callback(refresh_token, refresh_expires_at)
         return token
 
     def _access_token_is_stale(self) -> bool:
@@ -679,6 +743,13 @@ class EonNextRatesClient:
     def _clear_access_token(self) -> None:
         self._token = None
         self._token_expires_at = None
+
+    def _clear_refresh_token(self) -> None:
+        self._refresh_token = None
+        self._refresh_token_expires_at = None
+        self._refresh_token_expires_at_timestamp = None
+        if self._token_state_callback is not None:
+            self._token_state_callback(None, None)
 
 
 def _parse_datetime(value: str | None) -> datetime | None:

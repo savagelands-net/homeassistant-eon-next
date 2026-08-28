@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 import voluptuous as vol
+from aiohttp import CookieJar
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import (
     EonNextRatesAuthError,
@@ -14,7 +15,21 @@ from .api import (
     EonNextRatesConnectionError,
     EonNextRatesUnsupportedError,
 )
-from .const import DOMAIN
+from .const import (
+    CONF_REFRESH_TOKEN,
+    CONF_REFRESH_TOKEN_EXPIRES_AT,
+    DOMAIN,
+)
+
+
+class _ValidationResult(TypedDict):
+    title: str
+    username: str
+    password: str
+    account_number: str
+    refresh_token: str
+    refresh_token_expires_at: int
+
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -43,22 +58,39 @@ def _config_flow_error(
     return "unsupported_tariff"
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, str]) -> dict[str, str]:
-    client = EonNextRatesClient(
-        async_get_clientsession(hass),
-        email=data[CONF_USERNAME],
-        password=data[CONF_PASSWORD],
+async def validate_input(hass: HomeAssistant, data: dict[str, str]) -> _ValidationResult:
+    # Do not retain E.ON affinity cookies in Home Assistant's process-wide session.
+    session = async_create_clientsession(
+        hass,
+        auto_cleanup=False,
+        cookie_jar=CookieJar(),
     )
+    try:
+        client = EonNextRatesClient(
+            session,
+            email=data[CONF_USERNAME],
+            password=data[CONF_PASSWORD],
+        )
 
-    account_number = await client.async_discover_account_number()
-    await client.async_get_account_snapshot()
+        account_number = await client.async_discover_account_number()
+        await client.async_get_account_snapshot()
+        refresh_token = client.refresh_token
+        refresh_token_expires_at = client.refresh_token_expires_at
+        if refresh_token is None or refresh_token_expires_at is None:
+            raise EonNextRatesConnectionError(
+                "E.ON login did not return reusable refresh-token state"
+            )
 
-    return {
-        "title": f"E.ON Next {account_number}",
-        CONF_USERNAME: data[CONF_USERNAME],
-        CONF_PASSWORD: data[CONF_PASSWORD],
-        "account_number": account_number,
-    }
+        return _ValidationResult(
+            title=f"E.ON Next {account_number}",
+            username=data[CONF_USERNAME],
+            password=data[CONF_PASSWORD],
+            account_number=account_number,
+            refresh_token=refresh_token,
+            refresh_token_expires_at=refresh_token_expires_at,
+        )
+    finally:
+        session.detach()
 
 
 class EonNextRatesConfigFlow(  # pyright: ignore[reportGeneralTypeIssues]
@@ -81,6 +113,8 @@ class EonNextRatesConfigFlow(  # pyright: ignore[reportGeneralTypeIssues]
                         CONF_USERNAME: info[CONF_USERNAME],
                         CONF_PASSWORD: info[CONF_PASSWORD],
                         "account_number": info["account_number"],
+                        CONF_REFRESH_TOKEN: info[CONF_REFRESH_TOKEN],
+                        CONF_REFRESH_TOKEN_EXPIRES_AT: info[CONF_REFRESH_TOKEN_EXPIRES_AT],
                     },
                 )
             except (
@@ -124,6 +158,8 @@ class EonNextRatesConfigFlow(  # pyright: ignore[reportGeneralTypeIssues]
                         CONF_USERNAME: info[CONF_USERNAME],
                         CONF_PASSWORD: info[CONF_PASSWORD],
                         "account_number": info["account_number"],
+                        CONF_REFRESH_TOKEN: info[CONF_REFRESH_TOKEN],
+                        CONF_REFRESH_TOKEN_EXPIRES_AT: info[CONF_REFRESH_TOKEN_EXPIRES_AT],
                     },
                 )
 

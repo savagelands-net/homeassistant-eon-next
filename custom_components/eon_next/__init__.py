@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from aiohttp import CookieJar
+
 from .api import EonNextRatesClient
-from .const import DOMAIN, PLATFORMS
+from .const import (
+    CONF_REFRESH_TOKEN,
+    CONF_REFRESH_TOKEN_EXPIRES_AT,
+    DOMAIN,
+    PLATFORMS,
+)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -25,13 +32,37 @@ else:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+    from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
+    stored_refresh_token = entry.data.get(CONF_REFRESH_TOKEN)
+    if not isinstance(stored_refresh_token, str):
+        stored_refresh_token = None
+
+    stored_refresh_expiry = entry.data.get(CONF_REFRESH_TOKEN_EXPIRES_AT)
+    if not isinstance(stored_refresh_expiry, int) or isinstance(stored_refresh_expiry, bool):
+        stored_refresh_expiry = None
+
+    def _store_refresh_token(refresh_token: str | None, expires_at: int | None) -> None:
+        data = dict(entry.data)
+        if refresh_token is None or expires_at is None:
+            data.pop(CONF_REFRESH_TOKEN, None)
+            data.pop(CONF_REFRESH_TOKEN_EXPIRES_AT, None)
+        else:
+            data[CONF_REFRESH_TOKEN] = refresh_token
+            data[CONF_REFRESH_TOKEN_EXPIRES_AT] = expires_at
+
+        if data != entry.data:
+            hass.config_entries.async_update_entry(entry, data=data)
+
+    # Keep E.ON's load-balancer cookies scoped to this entry and clear them on unload.
     client = EonNextRatesClient(
-        async_get_clientsession(hass),
+        async_create_clientsession(hass, cookie_jar=CookieJar()),
         email=entry.data["username"],
         password=entry.data["password"],
         account_number=entry.data["account_number"],
+        refresh_token=stored_refresh_token,
+        refresh_token_expires_at=stored_refresh_expiry,
+        token_state_callback=_store_refresh_token,
     )
     coordinator = EonNextRatesCoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
