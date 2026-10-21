@@ -11,7 +11,7 @@ import pytest
 from aiohttp import CookieJar
 
 from custom_components.eon_next.api import AccountSnapshot
-from custom_components.eon_next.const import DOMAIN, PLATFORMS
+from custom_components.eon_next.const import CONF_API_KEY, DOMAIN, PLATFORMS
 
 
 @pytest.fixture
@@ -44,6 +44,27 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
     aiohttp_client.async_create_clientsession = _async_create_clientsession
     aiohttp_client.async_get_clientsession = lambda hass: hass.client_session
     helpers.aiohttp_client = aiohttp_client
+
+    selector: Any = types.ModuleType("homeassistant.helpers.selector")
+
+    class TextSelectorType:
+        PASSWORD = "password"
+
+    class TextSelectorConfig:
+        def __init__(self, *, type: str) -> None:
+            self.type = type
+
+    class TextSelector:
+        def __init__(self, config: TextSelectorConfig) -> None:
+            self.config = config
+
+        def __call__(self, value: str) -> str:
+            return value
+
+    selector.TextSelector = TextSelector
+    selector.TextSelectorConfig = TextSelectorConfig
+    selector.TextSelectorType = TextSelectorType
+    helpers.selector = selector
 
     entity_registry: Any = types.ModuleType("homeassistant.helpers.entity_registry")
 
@@ -143,6 +164,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
             self._unique_id = None
             self._configured_ids: set[str] = set()
             self._reauth_entry = None
+            self._reconfigure_entry = None
 
         async def async_set_unique_id(self, unique_id: str) -> None:
             self._unique_id = unique_id
@@ -155,8 +177,14 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
             assert self._reauth_entry is not None
             return self._reauth_entry
 
+        def _get_reconfigure_entry(self):
+            assert self._reconfigure_entry is not None
+            return self._reconfigure_entry
+
         def _abort_if_unique_id_mismatch(self) -> None:
-            if self._unique_id != self._get_reauth_entry().unique_id:
+            entry = self._reauth_entry or self._reconfigure_entry
+            assert entry is not None
+            if self._unique_id != entry.unique_id:
                 raise _AbortFlow("unique_id_mismatch")
 
         def async_show_form(self, *, step_id: str, data_schema=None, errors=None):
@@ -179,10 +207,25 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
         def async_abort(self, *, reason: str):
             return {"type": FlowResultType.ABORT, "reason": reason}
 
-        def async_update_reload_and_abort(self, entry, *, title: str, data_updates: dict[str, Any]):
+        def async_update_reload_and_abort(
+            self,
+            entry,
+            *,
+            title: str,
+            data: dict[str, Any] | None = None,
+            data_updates: dict[str, Any] | None = None,
+        ):
             entry.title = title
-            entry.data.update(data_updates)
-            return self.async_abort(reason="reauth_successful")
+            if data is not None:
+                entry.data = data
+            elif data_updates is not None:
+                entry.data.update(data_updates)
+            reason = (
+                "reconfigure_successful"
+                if entry is self._reconfigure_entry
+                else "reauth_successful"
+            )
+            return self.async_abort(reason=reason)
 
     @dataclass
     class ConfigEntry:
@@ -201,6 +244,7 @@ def integration_stubs(monkeypatch: pytest.MonkeyPatch):
         "homeassistant.helpers": helpers,
         "homeassistant.helpers.aiohttp_client": aiohttp_client,
         "homeassistant.helpers.entity_registry": entity_registry,
+        "homeassistant.helpers.selector": selector,
         "homeassistant.exceptions": exceptions,
         "homeassistant.core": core,
         "homeassistant.data_entry_flow": data_entry_flow,
@@ -307,8 +351,7 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
     entry = init_module.ConfigEntry(
         entry_id="entry-123",
         data={
-            "username": "user@example.com",
-            "password": "secret",
+            CONF_API_KEY: "sk_live_test",
             "account_number": "A-TEST0001",
             "refresh_token": "refresh-1",
             "refresh_token_expires_at": 2_000_007_200,
@@ -321,16 +364,14 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
             self,
             session,
             *,
-            email: str,
-            password: str,
+            api_key: str,
             account_number: str,
             refresh_token: str | None,
             refresh_token_expires_at: int | None,
             token_state_callback,
         ) -> None:
             created["session"] = session
-            created["email"] = email
-            created["password"] = password
+            created["api_key"] = api_key
             created["account_number"] = account_number
             created["refresh_token"] = refresh_token
             created["refresh_token_expires_at"] = refresh_token_expires_at
@@ -361,8 +402,7 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
     session = hass.created_client_sessions[0]
     assert created == {
         "session": session,
-        "email": "user@example.com",
-        "password": "secret",
+        "api_key": "sk_live_test",
         "account_number": "A-TEST0001",
         "refresh_token": "refresh-1",
         "refresh_token_expires_at": 2_000_007_200,
@@ -377,6 +417,25 @@ async def test_async_setup_entry_creates_client_and_stores_runtime_objects(
     assert isinstance(stored["client"], _Client)
     assert stored["coordinator"].first_refreshes == 1
     assert hass.forward_calls == [(entry, PLATFORMS)]
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_requests_reauth_for_legacy_password_entry(init_module) -> None:
+    hass = init_module.HomeAssistant()
+    entry = init_module.ConfigEntry(
+        data={
+            "username": "user@example.com",
+            "password": "old-secret",
+            "account_number": "A-TEST0001",
+        }
+    )
+    auth_error = sys.modules["homeassistant.exceptions"].ConfigEntryAuthFailed
+
+    with pytest.raises(auth_error, match="requires an API key"):
+        await init_module.async_setup_entry(hass, entry)
+
+    assert hass.created_client_sessions == []
+    assert entry.data["account_number"] == "A-TEST0001"
 
 
 def test_entity_registry_stub_only_exposes_lookup_api(integration_stubs) -> None:
@@ -400,16 +459,15 @@ async def test_async_unload_entry_unloads_platforms_and_clears_storage(init_modu
 
 
 @pytest.mark.asyncio
-async def test_async_step_user_creates_entry_after_validating_account(
+async def test_validate_input_creates_client_and_discovers_account(
     config_flow_module, monkeypatch: pytest.MonkeyPatch, snapshot
 ) -> None:
     captured: dict[str, object] = {}
 
     class _Client:
-        def __init__(self, session, *, email: str, password: str) -> None:
+        def __init__(self, session, *, api_key: str) -> None:
             captured["session"] = session
-            captured["email"] = email
-            captured["password"] = password
+            captured["api_key"] = api_key
             self.refresh_token = "refresh-1"
             self.refresh_token_expires_at = 2_000_007_200
 
@@ -424,13 +482,12 @@ async def test_async_step_user_creates_entry_after_validating_account(
     hass = config_flow_module.HomeAssistant()
     result = await config_flow_module.validate_input(
         hass=hass,
-        data={"username": "user@example.com", "password": "secret"},
+        data={CONF_API_KEY: "  sk_live_test  "},
     )
 
     assert result == {
         "title": "E.ON Next A-TEST0001",
-        "username": "user@example.com",
-        "password": "secret",
+        CONF_API_KEY: "sk_live_test",
         "account_number": "A-TEST0001",
         "refresh_token": "refresh-1",
         "refresh_token_expires_at": 2_000_007_200,
@@ -438,8 +495,7 @@ async def test_async_step_user_creates_entry_after_validating_account(
     session = hass.created_client_sessions[0]
     assert captured == {
         "session": session,
-        "email": "user@example.com",
-        "password": "secret",
+        "api_key": "sk_live_test",
     }
     assert session.kwargs["auto_cleanup"] is False
     assert isinstance(session.kwargs["cookie_jar"], CookieJar)
@@ -453,8 +509,7 @@ async def test_config_flow_user_step_sets_unique_id_and_creates_entry(
     async def _validate_input(hass, data):
         return {
             "title": "E.ON Next A-TEST0001",
-            "username": data["username"],
-            "password": data["password"],
+            CONF_API_KEY: data[CONF_API_KEY],
             "account_number": "A-TEST0001",
             "refresh_token": "refresh-1",
             "refresh_token_expires_at": 2_000_007_200,
@@ -465,14 +520,13 @@ async def test_config_flow_user_step_sets_unique_id_and_creates_entry(
     flow = config_flow_module.EonNextRatesConfigFlow()
     flow.hass = object()
 
-    result = await flow.async_step_user({"username": "user@example.com", "password": "secret"})
+    result = await flow.async_step_user({CONF_API_KEY: "sk_live_test"})
 
     assert result == {
         "type": "create_entry",
         "title": "E.ON Next A-TEST0001",
         "data": {
-            "username": "user@example.com",
-            "password": "secret",
+            CONF_API_KEY: "sk_live_test",
             "account_number": "A-TEST0001",
             "refresh_token": "refresh-1",
             "refresh_token_expires_at": 2_000_007_200,
@@ -482,57 +536,32 @@ async def test_config_flow_user_step_sets_unique_id_and_creates_entry(
 
 
 @pytest.mark.asyncio
-async def test_config_flow_user_step_reports_invalid_auth(
-    config_flow_module, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("exception_name", "expected_error"),
+    [
+        ("EonNextRatesAuthError", "invalid_auth"),
+        ("EonNextRatesConnectionError", "cannot_connect"),
+        ("EonNextRatesUnsupportedError", "unsupported_tariff"),
+    ],
+)
+async def test_config_flow_user_step_reports_validation_error(
+    config_flow_module,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_name: str,
+    expected_error: str,
 ) -> None:
     async def _validate_input(hass, data):
-        raise config_flow_module.EonNextRatesAuthError
+        raise getattr(config_flow_module, exception_name)
 
     monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
 
     flow = config_flow_module.EonNextRatesConfigFlow()
     flow.hass = object()
 
-    result = await flow.async_step_user({"username": "user@example.com", "password": "secret"})
+    result = await flow.async_step_user({CONF_API_KEY: "sk_live_test"})
 
     assert result["type"] == "form"
-    assert result["errors"] == {"base": "invalid_auth"}
-
-
-@pytest.mark.asyncio
-async def test_config_flow_user_step_reports_cannot_connect(
-    config_flow_module, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _validate_input(hass, data):
-        raise config_flow_module.EonNextRatesConnectionError
-
-    monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
-
-    flow = config_flow_module.EonNextRatesConfigFlow()
-    flow.hass = object()
-
-    result = await flow.async_step_user({"username": "user@example.com", "password": "secret"})
-
-    assert result["type"] == "form"
-    assert result["errors"] == {"base": "cannot_connect"}
-
-
-@pytest.mark.asyncio
-async def test_config_flow_user_step_reports_unsupported_tariff(
-    config_flow_module, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def _validate_input(hass, data):
-        raise config_flow_module.EonNextRatesUnsupportedError
-
-    monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
-
-    flow = config_flow_module.EonNextRatesConfigFlow()
-    flow.hass = object()
-
-    result = await flow.async_step_user({"username": "user@example.com", "password": "secret"})
-
-    assert result["type"] == "form"
-    assert result["errors"] == {"base": "unsupported_tariff"}
+    assert result["errors"] == {"base": expected_error}
 
 
 @pytest.mark.asyncio
@@ -542,8 +571,7 @@ async def test_config_flow_user_step_aborts_when_account_is_already_configured(
     async def _validate_input(hass, data):
         return {
             "title": "E.ON Next A-TEST0001",
-            "username": data["username"],
-            "password": data["password"],
+            CONF_API_KEY: data[CONF_API_KEY],
             "account_number": "A-TEST0001",
             "refresh_token": "refresh-1",
             "refresh_token_expires_at": 2_000_007_200,
@@ -556,18 +584,17 @@ async def test_config_flow_user_step_aborts_when_account_is_already_configured(
     flow._configured_ids.add("A-TEST0001")
 
     with pytest.raises(_AbortFlow, match="already_configured"):
-        await flow.async_step_user({"username": "user@example.com", "password": "secret"})
+        await flow.async_step_user({CONF_API_KEY: "sk_live_test"})
 
 
 @pytest.mark.asyncio
-async def test_config_flow_reauth_updates_and_reloads_existing_entry(
+async def test_config_flow_reauth_migrates_existing_entry_in_place(
     config_flow_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def _validate_input(hass, data):
         return {
             "title": "E.ON Next A-TEST0001",
-            "username": data["username"],
-            "password": data["password"],
+            CONF_API_KEY: data[CONF_API_KEY],
             "account_number": "A-TEST0001",
             "refresh_token": "refresh-2",
             "refresh_token_expires_at": 2_000_010_800,
@@ -576,6 +603,7 @@ async def test_config_flow_reauth_updates_and_reloads_existing_entry(
     monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
 
     entry = config_flow_module.config_entries.ConfigEntry(
+        entry_id="entry-123",
         data={
             "username": "old@example.com",
             "password": "old-secret",
@@ -588,17 +616,16 @@ async def test_config_flow_reauth_updates_and_reloads_existing_entry(
     flow._reauth_entry = entry
 
     initial_result = await flow.async_step_reauth(entry.data)
-    result = await flow.async_step_reauth_confirm(
-        {"username": "user@example.com", "password": "new-secret"}
-    )
+    result = await flow.async_step_reauth_confirm({CONF_API_KEY: "sk_live_test"})
 
     assert initial_result["type"] == "form"
     assert initial_result["step_id"] == "reauth_confirm"
     assert result == {"type": "abort", "reason": "reauth_successful"}
+    assert entry.entry_id == "entry-123"
+    assert entry.unique_id == "A-TEST0001"
     assert entry.title == "E.ON Next A-TEST0001"
     assert entry.data == {
-        "username": "user@example.com",
-        "password": "new-secret",
+        CONF_API_KEY: "sk_live_test",
         "account_number": "A-TEST0001",
         "refresh_token": "refresh-2",
         "refresh_token_expires_at": 2_000_010_800,
@@ -606,7 +633,7 @@ async def test_config_flow_reauth_updates_and_reloads_existing_entry(
 
 
 @pytest.mark.asyncio
-async def test_config_flow_reauth_reports_invalid_auth(
+async def test_config_flow_reauth_reports_invalid_auth_without_changing_entry(
     config_flow_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def _validate_input(hass, data):
@@ -614,26 +641,60 @@ async def test_config_flow_reauth_reports_invalid_auth(
 
     monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
 
+    original_data = {
+        "username": "user@example.com",
+        "password": "old-secret",
+        "account_number": "A-TEST0001",
+    }
     entry = config_flow_module.config_entries.ConfigEntry(
-        data={
-            "username": "user@example.com",
-            "password": "old-secret",
-            "account_number": "A-TEST0001",
-        },
+        data=dict(original_data),
         unique_id="A-TEST0001",
     )
     flow = config_flow_module.EonNextRatesConfigFlow()
     flow.hass = object()
     flow._reauth_entry = entry
 
-    result = await flow.async_step_reauth_confirm(
-        {"username": "user@example.com", "password": "wrong-secret"}
-    )
+    result = await flow.async_step_reauth_confirm({CONF_API_KEY: "sk_live_invalid"})
 
     assert result["type"] == "form"
     assert result["step_id"] == "reauth_confirm"
     assert result["errors"] == {"base": "invalid_auth"}
-    assert entry.data["password"] == "old-secret"
+    assert entry.data == original_data
+
+
+@pytest.mark.asyncio
+async def test_config_flow_reconfigure_replaces_api_key(
+    config_flow_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def _validate_input(hass, data):
+        return {
+            "title": "E.ON Next A-TEST0001",
+            CONF_API_KEY: data[CONF_API_KEY],
+            "account_number": "A-TEST0001",
+            "refresh_token": "refresh-2",
+            "refresh_token_expires_at": 2_000_010_800,
+        }
+
+    monkeypatch.setattr(config_flow_module, "validate_input", _validate_input)
+
+    entry = config_flow_module.config_entries.ConfigEntry(
+        data={
+            CONF_API_KEY: "sk_live_old",
+            "account_number": "A-TEST0001",
+        },
+        unique_id="A-TEST0001",
+    )
+    flow = config_flow_module.EonNextRatesConfigFlow()
+    flow.hass = object()
+    flow._reconfigure_entry = entry
+
+    initial_result = await flow.async_step_reconfigure()
+    result = await flow.async_step_reconfigure({CONF_API_KEY: "sk_live_new"})
+
+    assert initial_result["type"] == "form"
+    assert initial_result["step_id"] == "reconfigure"
+    assert result == {"type": "abort", "reason": "reconfigure_successful"}
+    assert entry.data[CONF_API_KEY] == "sk_live_new"
 
 
 @pytest.mark.asyncio

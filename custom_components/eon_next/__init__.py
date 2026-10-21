@@ -6,6 +6,7 @@ from aiohttp import CookieJar
 
 from .api import EonNextRatesClient
 from .const import (
+    CONF_API_KEY,
     CONF_REFRESH_TOKEN,
     CONF_REFRESH_TOKEN_EXPIRES_AT,
     DOMAIN,
@@ -32,7 +33,14 @@ else:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    from homeassistant.exceptions import ConfigEntryAuthFailed
     from homeassistant.helpers.aiohttp_client import async_create_clientsession
+
+    api_key = entry.data.get(CONF_API_KEY)
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise ConfigEntryAuthFailed(
+            "E.ON Next now requires an API key; reauthenticate this config entry"
+        )
 
     stored_refresh_token = entry.data.get(CONF_REFRESH_TOKEN)
     if not isinstance(stored_refresh_token, str):
@@ -57,8 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Keep E.ON's load-balancer cookies scoped to this entry and clear them on unload.
     client = EonNextRatesClient(
         async_create_clientsession(hass, cookie_jar=CookieJar()),
-        email=entry.data["username"],
-        password=entry.data["password"],
+        api_key=api_key.strip(),
         account_number=entry.data["account_number"],
         refresh_token=stored_refresh_token,
         refresh_token_expires_at=stored_refresh_expiry,

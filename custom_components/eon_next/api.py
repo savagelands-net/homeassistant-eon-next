@@ -22,7 +22,7 @@ _HTTP_DIAGNOSTIC_HEADERS = {
     "x-kraken-correlation-id": "correlation_id",
 }
 
-LOGIN_MUTATION = """mutation loginEmailAuthentication($input: ObtainJSONWebTokenInput!) {
+API_KEY_LOGIN_MUTATION = """mutation loginApiKey($input: ObtainJSONWebTokenInput!) {
   obtainKrakenToken(input: $input) {
     payload
     refreshExpiresIn
@@ -466,8 +466,7 @@ class EonNextRatesClient:
         self,
         session,
         *,
-        email: str,
-        password: str,
+        api_key: str,
         account_number: str | None = None,
         refresh_token: str | None = None,
         refresh_token_expires_at: int | None = None,
@@ -476,8 +475,7 @@ class EonNextRatesClient:
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._session = session
-        self._email = email
-        self._password = password
+        self._api_key = api_key
         self._graphql_url = graphql_url
         self._now = now or (lambda: datetime.now(UTC))
         self._token: str | None = None
@@ -510,7 +508,7 @@ class EonNextRatesClient:
     ) -> dict:
         headers = {"content-type": "application/json"}
         if token is not None:
-            headers["authorization"] = f"JWT {token}"
+            headers.update(authorization=f"JWT {token}")
 
         try:
             async with self._session.post(
@@ -522,7 +520,7 @@ class EonNextRatesClient:
                 payload = await response.json()
         except ClientResponseError as err:
             if err.status == 403:
-                if query == LOGIN_MUTATION:
+                if query == API_KEY_LOGIN_MUTATION:
                     message = "E.ON temporarily rejected the login request with HTTP 403"
                     if diagnostics := _http_response_diagnostics(err.headers):
                         message = f"{message} ({diagnostics})"
@@ -536,10 +534,17 @@ class EonNextRatesClient:
         except (ClientError, OSError, TimeoutError) as err:
             raise EonNextRatesConnectionError(str(err)) from err
 
-        if payload.get("errors"):
-            if _is_auth_error(payload["errors"]):
-                raise EonNextRatesAuthError(f"GraphQL authentication failed: {payload['errors']}")
-            raise EonNextRatesConnectionError(f"GraphQL request failed: {payload['errors']}")
+        if errors := payload.get("errors"):
+            diagnostics = _graphql_error_diagnostics(errors)
+            if _is_auth_error(errors):
+                message = "GraphQL authentication failed"
+                if diagnostics:
+                    message = f"{message} ({diagnostics})"
+                raise EonNextRatesAuthError(message)
+            message = "GraphQL request failed"
+            if diagnostics:
+                message = f"{message} ({diagnostics})"
+            raise EonNextRatesConnectionError(message)
 
         data = payload.get("data")
         if data is None:
@@ -549,8 +554,8 @@ class EonNextRatesClient:
 
     async def _async_login(self) -> str:
         data = await self._graphql(
-            LOGIN_MUTATION,
-            {"input": {"email": self._email, "password": self._password}},
+            API_KEY_LOGIN_MUTATION,
+            {"input": {"APIKey": self._api_key}},
         )
         return self._store_token_state(data["obtainKrakenToken"])
 
@@ -1461,6 +1466,20 @@ def _token_expiry_datetime(payload: dict[str, Any] | None) -> datetime | None:
     return datetime.fromtimestamp(exp, UTC)
 
 
+def _graphql_error_diagnostics(errors: list[dict[str, Any]]) -> str:
+    """Return error codes only, never descriptions that could echo secret input."""
+    codes: list[str] = []
+    for error in errors:
+        extensions = error.get("extensions")
+        if not isinstance(extensions, dict):
+            continue
+        for field in ("code", "errorCode"):
+            code = extensions.get(field)
+            if isinstance(code, str) and code not in codes:
+                codes.append(code)
+    return ", ".join(codes)
+
+
 def _is_auth_error(errors: list[dict[str, Any]]) -> bool:
     for error in errors:
         extensions = error.get("extensions")
@@ -1474,8 +1493,8 @@ def _is_auth_error(errors: list[dict[str, Any]]) -> bool:
         # E.ON returns these validation errors for expired or rejected refresh tokens.
         if error_code in {"KT-CT-1134", "KT-CT-1135"}:
             return True
-        # Invalid email/password responses use HTTP 200 with this GraphQL error code.
-        if error_code == "KT-CT-1138":
+        # Invalid credentials and API keys use HTTP 200 with these GraphQL error codes.
+        if error_code in {"KT-CT-1138", "KT-CT-1139"}:
             return True
 
         message_parts = [error.get("message"), extensions.get("errorDescription")]

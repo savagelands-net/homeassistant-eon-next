@@ -5,6 +5,7 @@ from datetime import timedelta
 DOMAIN = "eon_next"
 PLATFORMS = ["sensor"]
 GRAPHQL_URL = "https://api.eonnext-kraken.energy/v1/graphql/"
+CONF_API_KEY = "api_key"
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_REFRESH_TOKEN_EXPIRES_AT = "refresh_token_expires_at"
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=1)

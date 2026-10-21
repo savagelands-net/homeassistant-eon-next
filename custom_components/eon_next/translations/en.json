@@ -3,29 +3,35 @@
     "step": {
       "user": {
         "title": "Connect E.ON Next",
+        "description": "Enter your E.ON Next API key. If you do not have one, follow the [API-key helper instructions](https://github.com/savagelands-net/homeassistant-eon-next#getting-an-api-key).",
         "data": {
-          "username": "Email",
-          "password": "Password"
+          "api_key": "API key"
         }
       },
       "reauth_confirm": {
         "title": "Reconnect E.ON Next",
-        "description": "E.ON Next could not sign in. Enter your account credentials again.",
+        "description": "E.ON Next now requires an API key. Enter the `sk_live_...` key to update this existing integration without losing its entities or history. See the [API-key helper instructions](https://github.com/savagelands-net/homeassistant-eon-next#getting-an-api-key).",
         "data": {
-          "username": "Email",
-          "password": "Password"
+          "api_key": "API key"
+        }
+      },
+      "reconfigure": {
+        "title": "Update E.ON Next API key",
+        "description": "Enter the replacement `sk_live_...` API key. If you need to create one, follow the [API-key helper instructions](https://github.com/savagelands-net/homeassistant-eon-next#getting-an-api-key).",
+        "data": {
+          "api_key": "API key"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid authentication",
+      "invalid_auth": "Invalid API key",
       "cannot_connect": "Failed to connect",
       "unsupported_tariff": "This account does not expose a supported half-hourly tariff"
     },
     "abort": {
       "already_configured": "Account is already configured",
       "reauth_successful": "Authentication updated successfully",
-      "unique_id_mismatch": "These credentials belong to a different E.ON Next account"
+      "unique_id_mismatch": "This API key belongs to a different E.ON Next account"
     }
   }
 }

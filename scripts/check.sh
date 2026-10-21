@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 INTEGRATION_DIR="$REPO_ROOT/custom_components/eon_next"
 TESTS_DIR="$REPO_ROOT/tests/components/eon_next"
+TOOLS_DIR="$REPO_ROOT/tools"
 ALLOW_MISSING_DEV_TOOLS="${ALLOW_MISSING_DEV_TOOLS:-0}"
 
 if [[ -x "$REPO_ROOT/.venv/bin/python" ]]; then
@@ -22,7 +23,7 @@ fi
 "$PYTHON_BIN" -m json.tool "$INTEGRATION_DIR/manifest.json" >/dev/null
 "$PYTHON_BIN" -m json.tool "$INTEGRATION_DIR/strings.json" >/dev/null
 "$PYTHON_BIN" -m json.tool "$INTEGRATION_DIR/translations/en.json" >/dev/null
-"$PYTHON_BIN" -m compileall "$INTEGRATION_DIR" "$TESTS_DIR"
+"$PYTHON_BIN" -m compileall "$INTEGRATION_DIR" "$TESTS_DIR" "$TOOLS_DIR"
 
 if "$PYTHON_BIN" -m pytest --version >/dev/null 2>&1; then
   "$PYTHON_BIN" -m pytest "$TESTS_DIR" -q
@@ -34,7 +35,7 @@ else
 fi
 
 if command -v "$RUFF_BIN" >/dev/null 2>&1; then
-  "$RUFF_BIN" check "$INTEGRATION_DIR" "$TESTS_DIR"
+  "$RUFF_BIN" check "$INTEGRATION_DIR" "$TESTS_DIR" "$TOOLS_DIR"
 elif [[ "$ALLOW_MISSING_DEV_TOOLS" == "1" ]]; then
   printf 'Skipping ruff: install it with pip install -r %s/requirements_dev.txt\n' "$REPO_ROOT"
 else

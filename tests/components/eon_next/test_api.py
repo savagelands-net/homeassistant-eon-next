@@ -11,7 +11,7 @@ from multidict import CIMultiDict  # pyright: ignore[reportMissingImports]
 
 from custom_components.eon_next.api import (
     AGREEMENTS_QUERY,
-    LOGIN_MUTATION,
+    API_KEY_LOGIN_MUTATION,
     REFRESH_MUTATION,
     SMARTFLEX_DEVICES_QUERY,
     VIEWER_QUERY,
@@ -597,8 +597,8 @@ def _refresh_token_error_payload(error_code: str, description: str) -> dict[str,
     }
 
 
-def _credentials_error_payload() -> dict[str, Any]:
-    description = "Please make sure the credentials are correct."
+def _api_key_error_payload() -> dict[str, Any]:
+    description = "Please make sure the API key is correct."
     return {
         "errors": [
             {
@@ -606,18 +606,14 @@ def _credentials_error_payload() -> dict[str, Any]:
                 "path": ["obtainKrakenToken"],
                 "extensions": {
                     "errorType": "VALIDATION",
-                    "errorCode": "KT-CT-1138",
+                    "errorCode": "KT-CT-1139",
                     "errorDescription": description,
                     "errorClass": "VALIDATION",
                     "validationErrors": [
                         {
                             "message": description,
-                            "inputPath": ["input", "email"],
-                        },
-                        {
-                            "message": description,
-                            "inputPath": ["input", "password"],
-                        },
+                            "inputPath": ["input", "APIKey"],
+                        }
                     ],
                 },
             }
@@ -1684,8 +1680,7 @@ def test_client_discovers_first_account_with_usable_snapshot() -> None:
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
     )
 
@@ -1773,8 +1768,7 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
     )
 
@@ -1824,7 +1818,10 @@ def test_client_discovers_account_and_fetches_account_snapshot() -> None:
         latest_gas_meter_reading_register_is_quarantined=False,
         gas_meter_point_mprn="1234567890",
     )
-    assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
+    assert session.requests[0]["json"] == {
+        "query": API_KEY_LOGIN_MUTATION,
+        "variables": {"input": {"APIKey": "sk_live_test"}},
+    }
     assert session.requests[1]["json"]["query"] == VIEWER_QUERY
     assert session.requests[1]["headers"]["authorization"] == "JWT access-1"
     assert session.requests[2]["json"]["query"] == AGREEMENTS_QUERY
@@ -1943,8 +1940,7 @@ def test_async_get_account_snapshot_includes_smartflex_devices_and_planned_dispa
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
     )
 
@@ -2117,8 +2113,7 @@ def test_async_get_account_snapshot_ignores_optional_planned_dispatch_query_fail
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
     )
 
@@ -2220,8 +2215,7 @@ def test_async_get_account_snapshot_returns_no_smartflex_devices_when_devices_qu
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
     )
 
@@ -2296,8 +2290,7 @@ def test_async_get_account_snapshot_ignores_past_planned_dispatches() -> None:
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 15, tzinfo=UTC),
     )
 
@@ -2376,8 +2369,7 @@ def test_client_refreshes_stale_token_before_reuse() -> None:
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
     )
 
@@ -2386,7 +2378,7 @@ def test_client_refreshes_stale_token_before_reuse() -> None:
 
     assert first_account_number == "A-TEST0001"
     assert second_account_number == "A-SECOND"
-    assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
+    assert session.requests[0]["json"]["query"] == API_KEY_LOGIN_MUTATION
     assert session.requests[3]["json"]["query"] == REFRESH_MUTATION
     assert session.requests[4]["headers"]["authorization"] == "JWT access-2"
 
@@ -2403,20 +2395,22 @@ def test_client_stores_refresh_expiry_as_unix_timestamp() -> None:
             )
         ]
     )
-    client = EonNextRatesClient(session, email="user@example.com", password="secret")
+    client = EonNextRatesClient(
+        session,
+        api_key="sk_live_test",
+    )
 
     asyncio.run(client._async_access_token())
 
     assert client._refresh_token_expires_at == datetime.fromtimestamp(refresh_expires_at, UTC)
 
 
-def test_client_uses_persisted_refresh_token_before_password_login() -> None:
+def test_client_uses_persisted_refresh_token_before_api_key_login() -> None:
     token_updates: list[tuple[str | None, int | None]] = []
     session = _FakeSession([_token_payload("access-2", "refresh-2", 2_000_003_600)])
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         refresh_token="refresh-1",
         refresh_token_expires_at=2_000_007_200,
         token_state_callback=lambda token, expires_at: token_updates.append((token, expires_at)),
@@ -2444,8 +2438,7 @@ def test_client_logs_in_again_when_refresh_expiry_timestamp_has_passed() -> None
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
     )
 
@@ -2455,12 +2448,12 @@ def test_client_logs_in_again_when_refresh_expiry_timestamp_has_passed() -> None
     assert first_token == "access-1"
     assert second_token == "access-2"
     assert [request["json"]["query"] for request in session.requests] == [
-        LOGIN_MUTATION,
-        LOGIN_MUTATION,
+        API_KEY_LOGIN_MUTATION,
+        API_KEY_LOGIN_MUTATION,
     ]
 
 
-def test_client_treats_login_http_403_as_connection_error(
+def test_client_treats_api_key_login_http_403_as_connection_error(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     session = _FakeSession(
@@ -2477,7 +2470,10 @@ def test_client_treats_login_http_403_as_connection_error(
             )
         ]
     )
-    client = EonNextRatesClient(session, email="user@example.com", password="secret")
+    client = EonNextRatesClient(
+        session,
+        api_key="sk_live_test",
+    )
 
     with pytest.raises(
         EonNextRatesConnectionError,
@@ -2488,15 +2484,22 @@ def test_client_treats_login_http_403_as_connection_error(
 
     assert "private-load-balancer-cookie" not in caplog.text
     assert "correlation_id=kraken-request-456" in caplog.text
-    assert session.requests[0]["json"]["query"] == LOGIN_MUTATION
+    assert session.requests[0]["json"]["query"] == API_KEY_LOGIN_MUTATION
 
 
-def test_client_treats_rejected_credentials_as_auth_error() -> None:
-    session = _FakeSession([_credentials_error_payload()])
-    client = EonNextRatesClient(session, email="user@example.com", password="wrong-secret")
+def test_client_treats_rejected_api_key_as_auth_error_without_exposing_key() -> None:
+    error_payload = _api_key_error_payload()
+    error_payload["errors"][0]["extensions"]["errorDescription"] = "Rejected sk_live_invalid"
+    session = _FakeSession([error_payload])
+    client = EonNextRatesClient(
+        session,
+        api_key="sk_live_invalid",
+    )
 
-    with pytest.raises(EonNextRatesAuthError, match="KT-CT-1138"):
+    with pytest.raises(EonNextRatesAuthError, match="KT-CT-1139") as err:
         asyncio.run(client._async_access_token())
+
+    assert "sk_live_invalid" not in str(err.value)
 
 
 @pytest.mark.parametrize(
@@ -2519,8 +2522,7 @@ def test_client_logs_in_again_when_refresh_token_is_rejected(
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         token_state_callback=lambda token, expires_at: token_updates.append((token, expires_at)),
         now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
     )
@@ -2531,9 +2533,9 @@ def test_client_logs_in_again_when_refresh_token_is_rejected(
     assert first_token == "access-1"
     assert second_token == "access-2"
     assert [request["json"]["query"] for request in session.requests] == [
-        LOGIN_MUTATION,
+        API_KEY_LOGIN_MUTATION,
         REFRESH_MUTATION,
-        LOGIN_MUTATION,
+        API_KEY_LOGIN_MUTATION,
     ]
     assert token_updates == [
         ("refresh-1", 2_000_007_200),
@@ -2553,8 +2555,7 @@ def test_client_logs_in_again_when_refresh_request_is_rejected(status: int) -> N
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
     )
 
@@ -2564,9 +2565,9 @@ def test_client_logs_in_again_when_refresh_request_is_rejected(status: int) -> N
     assert first_token == "access-1"
     assert second_token == "access-2"
     assert [request["json"]["query"] for request in session.requests] == [
-        LOGIN_MUTATION,
+        API_KEY_LOGIN_MUTATION,
         REFRESH_MUTATION,
-        LOGIN_MUTATION,
+        API_KEY_LOGIN_MUTATION,
     ]
 
 
@@ -2580,13 +2581,16 @@ def test_client_refreshes_and_retries_after_authenticated_http_403() -> None:
             viewer_payload,
         ]
     )
-    client = EonNextRatesClient(session, email="user@example.com", password="secret")
+    client = EonNextRatesClient(
+        session,
+        api_key="sk_live_test",
+    )
 
     data = asyncio.run(client._async_authenticated_graphql(VIEWER_QUERY))
 
     assert data == viewer_payload["data"]
     assert [request["json"]["query"] for request in session.requests] == [
-        LOGIN_MUTATION,
+        API_KEY_LOGIN_MUTATION,
         VIEWER_QUERY,
         REFRESH_MUTATION,
         VIEWER_QUERY,
@@ -2633,8 +2637,7 @@ def test_client_retries_once_with_new_token_after_auth_failure() -> None:
     )
     client = EonNextRatesClient(
         session,
-        email="user@example.com",
-        password="secret",
+        api_key="sk_live_test",
         now=lambda: datetime(2026, 5, 1, 12, 0, tzinfo=UTC),
     )
 
@@ -2655,7 +2658,10 @@ def test_client_raises_after_single_auth_retry_fails() -> None:
             _auth_error_payload(),
         ]
     )
-    client = EonNextRatesClient(session, email="user@example.com", password="secret")
+    client = EonNextRatesClient(
+        session,
+        api_key="sk_live_test",
+    )
 
     with pytest.raises(EonNextRatesAuthError, match="UNAUTHENTICATED"):
         asyncio.run(client.async_discover_account_number())

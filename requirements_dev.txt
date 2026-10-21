@@ -3,3 +3,4 @@ pytest-asyncio
 ruff
 aiohttp
 voluptuous
+websockets>=12
