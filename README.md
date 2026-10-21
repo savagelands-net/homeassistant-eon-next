@@ -76,6 +76,14 @@ It never receives or stores your password, and it never prints or saves the Auth
 `--browser /path/to/chrome` if no browser is found, or `--print` if clipboard copying is not
 available.
 
+### Alternative: EnergyDock
+
+As explained by [EnergyDock maintainer baz1536](https://github.com/savagelands-net/homeassistant-eon-next/issues/1#issuecomment-6192331690),
+the EnergyDock app for iOS and Android can also create and display the E.ON API key when the
+account's legacy email/password API login still works. In EnergyDock, open **Account Details → API
+Key**, copy the `sk_live_...` value, and paste that same key into this integration. If the account
+has already moved to Auth0 and EnergyDock cannot sign in, use the browser helper above instead.
+
 Save the API key in a password manager before pasting it into Home Assistant. E.ON displays the
 full value only when it is created.
 
